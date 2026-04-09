@@ -253,16 +253,16 @@ python3 main.py
 
 ---
 
-## Team
+## Team (Update this with contribution)
 
 | Name | Role |
 |---|---|
-| Day Ekoi | Physical Design, SQL/NoSQL Integration, Backend Development |
-| Jonah Goodwine | Logical Schema, Application Integration, SwiftUI Prototype, Database Schema |
-| Zoe Battle | Business Requirements, Optimization Strategies, Organizational Fit |
-| Vaughn Huey | Logical Schema Design, SQL Integration, Legal Standards |
-| Miles Walker | NoSQL Integration, Ethical Considerations |
-| Ethan Williams | Introduction and Conclusion |
+| Day Ekoi | Physical Design, Backend Development |
+| Jonah Goodwine |  |
+| Zoe Battle |  |
+| Vaughn Huey | |
+| Miles Walker | |
+| Ethan Williams | |
 
 ---
 
