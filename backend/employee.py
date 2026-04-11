@@ -20,7 +20,9 @@ Functions:
    - get_all_managers()           : retrieves all managers for a branch
    - add_employee()               : adds a new employee record
    - update_employee_branch()     : transfers an employee to a different branch
-'''
+
+   !!!! Important Notes to self: refer to auth.py notes !!!!!
+   '''
 
 from config.db_config import get_connection, close_connection
 

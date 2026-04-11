@@ -22,7 +22,10 @@
    - get_purchase_orders()          : retrieves all purchase orders for a branch
    - update_purchase_order_status() : updates the status of a purchase order
    - receive_purchase_order()       : marks order as received and updates inventory
-'''
+
+  !!!! Important Notes to self: refer to auth.py notes !!!!! 
+   
+   '''
 
 from config.db_config import get_connection, close_connection
 

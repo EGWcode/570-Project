@@ -21,7 +21,27 @@
   - set_current_user() : sets the session after a successful login
   - hash_password()    : hashes a plain text password using bcrypt
   - verify_password()  : checks a plain text password against a stored hash
-'''
+
+Important Notes to self: Additions to the backend code so that it actually aligns with documentation/reporting 
+   - Check for duplicate username/email before registration : auth.py
+   - Basic input validation (required fields, email format) : auth.py
+   - Add role-based access check helper (manager/admin permissions) : auth.py
+   - Restrict customer actions to their own data : customer.py
+   - Validate reservation inputs (date, party size > 0) : customer.py, reservations.py
+   - Validate review rating (1–5) : customer.py, reviews.py
+   - Restrict employee management to manager/admin : employee.py
+   - Validate employment status values : employee.py
+   - Restrict inventory + purchase order actions to manager/admin : inventory.py
+   - Validate inventory values (no negatives) : inventory.py
+   - Restrict manager-only functions (analytics, menu, suppliers) : manager.py
+   - Validate order inputs (quantity > 0, item exists & active) : orders.py
+   - Restrict order status updates to staff/manager : orders.py
+   - Validate payment inputs (type, amount ≥ 0) : payments.py
+   - Restrict payment processing to staff/manager : payments.py
+   - Prevent assigning already occupied tables : reservations.py
+   - Restrict shift creation/updates to manager/admin : shifts.py
+   - Validate shift times (end > start) : shifts.py
+  '''
 
 
 import bcrypt

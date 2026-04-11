@@ -1,28 +1,29 @@
-# schema.sql
-#
-#     FLOW - Enterprise Restaurant Management System
-#   CSC 570 Sp 26'
-#     Created by Jonah Goodwine - March 6, 2026
-#     Updated/Refined by Day Ekoi - April 6-9, 2026
-#
-# This file defines the full relational database schema for the FLOW system.
-# It creates the flow_db MySQL database and all associated tables that support
-# the enterprise restaurant operations of Soul by the Sea.
-#
-# Tables defined here support the following system features:
-#   - Multi-branch operational support (branch, branch_hours)
-#   - User authentication and role based access (user_account)
-#   - Customer and employee management (person, customer, employee, manager, staff)
-#   - Reservations and party management (reservation, party)
-#   - Order processing and POS (orders, order_item, payment)
-#   - Menu management (menu_item, menu_item_ingredient)
-#   - Inventory and procurement (inventory_item, supplier, purchase_order, purchase_order_item)
-#   - Workforce scheduling (shift_schedule)
-#   - Customer feedback and sentiment (review)
-#
-# The three tables added by Day Ekoi (user_account, menu_item_ingredient, branch_hours)
-# were added to support login functionality, inventory decrement on order placement,
-# and reservation validation against branch operating hours.
+-- schema.sql
+--
+--     FLOW - Enterprise Restaurant Management System 
+--   CSC 570 Sp 26'
+
+--     Original Schema Created by Jonah Goodwine - March 6, 2026
+--     Updated/Refined by Day Ekoi - April 6-9, 2026
+--
+-- This file defines the full relational database schema for the FLOW system.
+-- It creates the flow_db MySQL database and all associated tables that support
+-- the enterprise restaurant operations of Soul by the Sea.
+--
+-- Tables defined support the following system features:
+--   - Multi-branch operational support (branch, branch_hours)
+--   - User authentication and role based access (user_account)
+--   - Customer and employee management (person, customer, employee, manager, staff)
+--   - Reservations and party management (reservation, party)
+--   - Order processing and POS (orders, order_item, payment)
+--   - Menu management (menu_item, menu_item_ingredient)
+--   - Inventory and procurement (inventory_item, supplier, purchase_order, purchase_order_item)
+--   - Workforce scheduling (shift_schedule)
+--   - Customer feedback and sentiment (review)
+--
+-- The three tables added by Day Ekoi (user_account, menu_item_ingredient, branch_hours)
+-- were added to support login functionality, inventory decrement on order placement,
+-- and reservation validation against branch operating hours.
 
 DROP DATABASE IF EXISTS flow_db;
 CREATE DATABASE flow_db;
