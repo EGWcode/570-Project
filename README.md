@@ -35,7 +35,6 @@ FLOW is a desktop-based enterprise management system built for Soul by the Sea, 
 | Version Control | GitHub |
 | Collaboration | Google Drive, Imessage |
 | IDE | VS Code |
-| Mobile Prototype | SwiftUI (Xcode) |
 
 ---
 
@@ -63,6 +62,88 @@ Tkinter Desktop App (Role-Based UI)
     │  (Cache Layer)        │  Frequently Accessed Records
     └───────────────────────┘
 ```
+
+
+---
+
+## How the System Works (Frontend, Backend, Database Flow)
+
+- the tkinter frontend is the user interface where customers, employees, managers, and admins interact with the system  
+- the python backend acts as the logic layer, processing all actions such as placing orders, making reservations, updating inventory, and retrieving data  
+- the backend connects to the databases using python connectors and determines where data should be stored or retrieved from  
+- mysql serves as the source of truth for all structured transactional data (orders, reservations, inventory, employees)  
+- mongodb stores flexible data such as customer reviews, live activity, and analytics  
+- redis is used for caching and real-time updates such as alerts, queues, and dashboard refreshes  
+- flow: user action in the frontend → backend processes request → data stored/retrieved from database → redis updates cache/alerts → frontend refreshes and displays updated data  
+
+---
+
+## Demo Behavior (Real-Time Simulation)
+
+- in addition to manual user actions, a simulation script will run in the background  
+- this script will continuously generate activity such as:  
+  - new reservations  
+  - new orders  
+  - inventory updates  
+  - customer reviews  
+  - multi-branch activity  
+- this allows the system to demonstrate real-time behavior, where:  
+  - pos screens update dynamically  
+  - manager dashboards show live alerts (ex: low inventory)  
+  - hq view displays activity across multiple branches  
+
+---
+
+## Role Based Interfaces
+
+| Role | Access |
+|---|---|
+| Customer | View menu, place orders, make reservations, leave reviews |
+| Staff/Employee | POS order entry, update order status, assign tables, check inventory, view schedule |
+| Manager | All staff access plus branch analytics, purchase orders, employee scheduling, menu management |
+| Admin | Cross-branch reporting, enterprise analytics, manage all branches and employees |
+
+---
+
+## Features
+
+### Authentication
+- Role based login screen routes users to the correct interface
+- Passwords stored as hashed values in the database
+- Roles: CUSTOMER, STAFF, MANAGER, ADMIN
+
+### Customer Interface
+- Browse active menu items
+- Place orders
+- Make and view reservations
+- Submit feedback and ratings
+
+### Staff Interface
+- POS order entry and management
+- Update order status (IN_PROGRESS, SERVED, COMPLETED, CANCELLED)
+- Assign tables and check in/out parties
+- View assigned shifts and schedules
+- Check inventory levels
+
+### Manager Interface
+- View and manage all orders and payments across branch
+- Manage employee schedules and shifts
+- View and update inventory levels
+- Create and manage purchase orders
+- View branch analytics and sales reports
+- View customer feedback and sentiment scores
+- Manage menu items and pricing
+
+### Admin Interface
+- Cross-branch performance comparison
+- Enterprise-wide analytics dashboard
+- Manage all branch locations
+- Manage all employees across branches
+
+
+---
+
+## Project Structure
 
 ---
 
@@ -253,19 +334,6 @@ python3 main.py
 
 ---
 
-## Team (Update this with contribution)
-
-| Name | Role |
-|---|---|
-| Day Ekoi | Physical Design, Backend Development |
-| Jonah Goodwine |  |
-| Zoe Battle |  |
-| Vaughn Huey | |
-| Miles Walker | |
-| Ethan Williams | |
-
----
-
 ## Current Status
 
-FLOW is currently in active development as part of CSC 570 Milestone 4. The database schema and connection layer are complete. Backend query modules and Tkinter frontend interfaces are currently being developed and will be connected to the live MySQL database for the final presentation.
+FLOW is currently in active development as part of CSC 570 Milestone 6. The database schema and connection layer are complete. Backend query modules and Tkinter frontend interfaces are currently being developed and will be connected to the live MySQL database for the final presentation.
