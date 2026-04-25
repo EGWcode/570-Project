@@ -1,3 +1,28 @@
+'''
+customer_ui.py
+
+    FLOW - Enterprise Restaurant Management System
+    CSC 570 Sp 26'
+    Created by Day Ekoi - April 23-24 2026
+
+ This file is the Tkinter customer interface for the FLOW system.
+ It provides the customer-facing portal for Soul by the Sea, including
+ menu browsing, cart management, checkout flow, reservation access,
+ and customer account actions.
+
+Functions / Classes:
+   - CustomerUI              : main Tkinter window for the customer portal
+   - __init__()              : initializes window state, menu data, and layout
+   - create_widgets()        : builds the main customer interface
+   - show_menu_items()       : displays menu items by category
+   - add_to_cart()           : adds a selected menu item to the cart
+   - update_cart()           : refreshes cart totals and item display
+   - checkout()              : handles customer checkout action
+
+   !!!! Important Notes to self: connect frontend actions to backend/customer.py !!!!
+'''
+
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
