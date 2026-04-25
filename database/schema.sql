@@ -1,7 +1,7 @@
 -- schema.sql
 --
 --     FLOW - Enterprise Restaurant Management System 
---   CSC 570 Sp 26'
+--     CSC 570 Sp 26'
 
 --     Original Schema Created by Jonah Goodwine - March 6, 2026
 --     Updated/Refined by Day Ekoi - April 6-9, 2026

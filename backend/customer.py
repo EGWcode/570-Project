@@ -20,7 +20,7 @@ Functions:
    - get_customer_orders()        : retrieves all orders associated with a customer
    - submit_review()              : submits a customer review for a branch
 
-   !!!! Important Notes to self: refre to auth.py notes !!!!!
+   !!!! Important Notes to self: refer to auth.py notes !!!!!
 '''
 
 from config.db_config import get_connection, close_connection

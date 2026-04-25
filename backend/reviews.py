@@ -43,6 +43,13 @@ def submit_review(person_id, branch_id, rating, comments=None):
         """, (person_id, branch_id, rating, comments))
 
         conn.commit()
+
+        try:
+            from config.mongo_config import log_review
+            log_review(person_id, branch_id, rating, comments)
+        except Exception:
+            pass
+
         return True, "Review submitted successfully."
 
     except Exception as e:

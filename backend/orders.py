@@ -132,24 +132,36 @@ def get_order_items(order_id):
         close_connection(conn, cursor)
 
 def update_order_status(order_id, status):
-    """Updates the status of an order."""
+    """Updates the status of an order and publishes the change to Redis and MongoDB."""
     conn = get_connection()
     if not conn:
         return False, "Database connection failed."
 
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
 
     try:
+        cursor.execute("SELECT branch_id FROM orders WHERE order_id = %s", (order_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "Order not found."
+        branch_id = row["branch_id"]
+
         cursor.execute("""
             UPDATE orders
             SET order_status = %s
             WHERE order_id = %s
         """, (status, order_id))
 
-        if cursor.rowcount == 0:
-            return False, "Order not found."
-
         conn.commit()
+
+        try:
+            from config.redis_config import publish_order_update
+            from config.mongo_config import log_order_event
+            publish_order_update(branch_id, order_id, status)
+            log_order_event(order_id, branch_id, "STATUS_CHANGED", {"new_status": status})
+        except Exception:
+            pass
+
         return True, f"Order status updated to {status}."
 
     except Exception as e:

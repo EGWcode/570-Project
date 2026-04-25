@@ -222,6 +222,15 @@ def check_in_party(reservation_id, branch_id, table_number, party_size):
         """, (reservation_id,))
 
         conn.commit()
+
+        try:
+            from config.redis_config import set_table_status as redis_set_table
+            from config.mongo_config import set_table_status as mongo_set_table
+            redis_set_table(branch_id, table_number, "occupied")
+            mongo_set_table(branch_id, table_number, "occupied")
+        except Exception:
+            pass
+
         return party_id, "Party checked in successfully."
 
     except Exception as e:
@@ -244,6 +253,12 @@ def check_out_party(party_id):
     cursor = conn.cursor()
 
     try:
+        # Fetch table/branch info before updating
+        cursor.execute("""
+            SELECT branch_id, table_number FROM party WHERE party_id = %s
+        """, (party_id,))
+        party_row = cursor.fetchone()
+
         # Set check out time
         cursor.execute("""
             UPDATE party
@@ -260,6 +275,16 @@ def check_out_party(party_id):
         """, (party_id,))
 
         conn.commit()
+
+        if party_row:
+            try:
+                from config.redis_config import set_table_status as redis_set_table
+                from config.mongo_config import set_table_status as mongo_set_table
+                redis_set_table(party_row[0], party_row[1], "available")
+                mongo_set_table(party_row[0], party_row[1], "available")
+            except Exception:
+                pass
+
         return True, "Party checked out successfully."
 
     except Exception as e:
