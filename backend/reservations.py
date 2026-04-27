@@ -18,6 +18,7 @@
    - update_reservation_status()   : updates the status of a reservation
    - cancel_reservation()          : cancels a reservation
    - check_in_party()              : checks in a party and creates a party record
+   - create_walk_in_party()        : creates an active party without reservation
    - check_out_party()             : checks out a party and closes the party record
    - get_active_parties()          : retrieves all currently seated parties for a branch
    - get_available_tables()        : retrieves tables not currently occupied at a branch
@@ -110,7 +111,7 @@ def get_reservations_by_date(branch_id, date):
 
 
 def create_reservation(person_id, branch_id, reservation_datetime, party_size):
-    """Creates a new reservation with PENDING status."""
+    """Creates a new reservation with CONFIRMED status."""
     conn = get_connection()
     if not conn:
         return False, "Database connection failed."
@@ -120,7 +121,7 @@ def create_reservation(person_id, branch_id, reservation_datetime, party_size):
     try:
         cursor.execute("""
             INSERT INTO reservation (person_id, branch_id, reservation_datetime, party_size, status)
-            VALUES (%s, %s, %s, %s, 'PENDING')
+            VALUES (%s, %s, %s, %s, 'CONFIRMED')
         """, (person_id, branch_id, reservation_datetime, party_size))
 
         conn.commit()
@@ -236,6 +237,44 @@ def check_in_party(reservation_id, branch_id, table_number, party_size):
     except Exception as e:
         conn.rollback()
         return None, f"Check in failed: {e}"
+
+    finally:
+        close_connection(conn, cursor)
+
+
+def create_walk_in_party(branch_id, table_number, party_size):
+    """
+    Creates an active walk-in party without a reservation.
+    Orders can attach directly to the returned party_id.
+    """
+    conn = get_connection()
+    if not conn:
+        return None, "Database connection failed."
+
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO party (reservation_id, branch_id, table_number, party_size, check_in_datetime)
+            VALUES (NULL, %s, %s, %s, NOW())
+        """, (branch_id, table_number, party_size))
+
+        party_id = cursor.lastrowid
+        conn.commit()
+
+        try:
+            from config.redis_config import set_table_status as redis_set_table
+            from config.mongo_config import set_table_status as mongo_set_table
+            redis_set_table(branch_id, table_number, "occupied")
+            mongo_set_table(branch_id, table_number, "occupied")
+        except Exception:
+            pass
+
+        return party_id, "Walk-in party created successfully."
+
+    except Exception as e:
+        conn.rollback()
+        return None, f"Walk-in creation failed: {e}"
 
     finally:
         close_connection(conn, cursor)

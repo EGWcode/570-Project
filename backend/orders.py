@@ -26,6 +26,23 @@ from config.db_config import get_connection, close_connection
 TAX_RATE = 0.08
 
 
+def _has_column(cursor, table_name, column_name):
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) AS column_exists
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = %s
+              AND COLUMN_NAME = %s
+        """, (table_name, column_name))
+        row = cursor.fetchone()
+        if isinstance(row, dict):
+            return row.get("column_exists", 0) > 0
+        return (row[0] if row else 0) > 0
+    except Exception:
+        return False
+
+
 def create_order(party_id, branch_id, employee_id):
     """
     Creates a new order linked to a party and employee.
@@ -69,11 +86,16 @@ def add_order_item(order_id, menu_item_id, quantity, item_price, special_instruc
     cursor = conn.cursor()
 
     try:
-        # Insert the order item
-        cursor.execute("""
-            INSERT INTO order_item (order_id, menu_item_id, quantity, item_price, special_instructions)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (order_id, menu_item_id, quantity, item_price, special_instructions))
+        if _has_column(cursor, "order_item", "special_instructions"):
+            cursor.execute("""
+                INSERT INTO order_item (order_id, menu_item_id, quantity, item_price, special_instructions)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (order_id, menu_item_id, quantity, item_price, special_instructions))
+        else:
+            cursor.execute("""
+                INSERT INTO order_item (order_id, menu_item_id, quantity, item_price)
+                VALUES (%s, %s, %s, %s)
+            """, (order_id, menu_item_id, quantity, item_price))
 
         # Recalculate order totals
         cursor.execute("""
@@ -113,9 +135,10 @@ def get_order_items(order_id):
     cursor = conn.cursor(dictionary=True)
 
     try:
-        cursor.execute("""
+        special_select = "oi.special_instructions" if _has_column(cursor, "order_item", "special_instructions") else "NULL AS special_instructions"
+        cursor.execute(f"""
             SELECT oi.order_item_id, oi.quantity, oi.item_price,
-                   oi.special_instructions,
+                   {special_select},
                    mi.item_name, mi.category,
                    (oi.quantity * oi.item_price) as line_total
             FROM order_item oi
@@ -171,8 +194,8 @@ def update_order_status(order_id, status):
     finally:
         close_connection(conn, cursor)
 
-def get_active_orders(branch_id):
-    """Retrieves all active in progress orders for a branch."""
+def get_active_orders(branch_id=None):
+    """Retrieves all active in-progress orders, optionally filtered by branch."""
     conn = get_connection()
     if not conn:
         return []
@@ -180,18 +203,24 @@ def get_active_orders(branch_id):
     cursor = conn.cursor(dictionary=True)
 
     try:
-        cursor.execute("""
+        branch_filter = "AND o.branch_id = %s" if branch_id else ""
+        params = (branch_id,) if branch_id else ()
+        cursor.execute(f"""
             SELECT o.order_id, o.order_datetime, o.order_status,
-                   o.subtotal, o.tax_amount, o.total_amount,
-                   o.party_id, pa.table_number,
-                   p.first_name, p.last_name
+                   o.subtotal, o.tax_amount, o.total_amount, o.notes,
+                   o.party_id, o.branch_id, b.branch_name,
+                   pa.table_number,
+                   COALESCE(p.first_name, 'Online') AS first_name,
+                   COALESCE(p.last_name, 'Order') AS last_name
             FROM orders o
-            JOIN party pa ON o.party_id = pa.party_id
-            JOIN employee e ON o.employee_id = e.person_id
-            JOIN person p ON e.person_id = p.person_id
-            WHERE o.branch_id = %s AND o.order_status = 'IN_PROGRESS'
+            LEFT JOIN party pa ON o.party_id = pa.party_id
+            LEFT JOIN branch b ON o.branch_id = b.branch_id
+            LEFT JOIN employee e ON o.employee_id = e.person_id
+            LEFT JOIN person p ON e.person_id = p.person_id
+            WHERE o.order_status = 'IN_PROGRESS'
+              {branch_filter}
             ORDER BY o.order_datetime ASC
-        """, (branch_id,))
+        """, params)
         return cursor.fetchall()
 
     except Exception as e:

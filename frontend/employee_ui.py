@@ -3,10 +3,12 @@
 FLOW POS — Soul By The Sea
 File: employee_ui.py
 
+Created by Zoe Battle
+
 Run with:  python employee_ui.py
 
-Database connections (fill in your credentials):
-  SQL    → sqlite3  (or swap for mysql.connector / psycopg2)
+Database connections:
+  SQL    → MySQL backend modules
   NoSQL  → pymongo  (MongoDB)
 
 Each section that touches the database is clearly marked with:
@@ -15,12 +17,25 @@ Each section that touches the database is clearly marked with:
 """
 
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
+import subprocess
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'backend'))
 
 import tkinter as tk
-from tkinter import ttk, messagebox, font as tkfont
-import sqlite3
+from tkinter import ttk, messagebox, font as tkfont, simpledialog
 from datetime import date
+
+try:
+    from backend.orders import get_active_orders, get_order_items, update_order_status
+    from backend.inventory import check_order_inventory, decrement_order_inventory
+    from backend.payments import process_payment
+    from config.db_config import close_connection, get_connection
+    MYSQL_ORDERS_AVAILABLE = True
+except Exception as exc:
+    MYSQL_IMPORT_ERROR = exc
+    MYSQL_ORDERS_AVAILABLE = False
 
 # ── Try MongoDB (optional — app still runs without it) ─────────────────────
 try:
@@ -34,15 +49,8 @@ except ImportError:
 #  Replace paths/URIs with your actual credentials
 # ══════════════════════════════════════════════════════════════════════════════
 
-SQL_DB_PATH   = "restaurant.db"       # your SQLite file path
 MONGO_URI     = "mongodb://localhost:27017/"
 MONGO_DB_NAME = "flow_db"
-
-def get_sql_conn():
-    """Returns a SQLite connection. Swap for MySQL/Postgres if needed."""
-    conn = sqlite3.connect(SQL_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 def get_mongo_db():
     """Returns MongoDB database object."""
@@ -90,100 +98,229 @@ def update_table_status_db(table_id, status):
             upsert=True
         )
     except Exception:
-        pass  # graceful fallback
+        pass  # fallback
 
 def load_todays_reservations():
     """
-    SQL: SELECT from Reservation table WHERE date = today
+    SQL: SELECT from reservation table WHERE date = today
     Returns list of dicts: [{ name, party_size, time, table_id }]
     """
+    if not MYSQL_ORDERS_AVAILABLE:
+        return []
+    conn = get_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor(dictionary=True)
     try:
-        conn = get_sql_conn()
-        today = date.today().isoformat()
-        rows = conn.execute(
-            "SELECT * FROM Reservation WHERE DATE(reservation_date) = ?", (today,)
-        ).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
-    except Exception:
-        # Fallback mock reservations
-        return [
-            {"customer_name": "Johnson, M.", "party_size": 4, "reservation_time": "6:00 PM", "table_id": "T-03"},
-            {"customer_name": "Williams, T.", "party_size": 2, "reservation_time": "7:30 PM", "table_id": "RT-02"},
-            {"customer_name": "Davis, K.",    "party_size": 6, "reservation_time": "8:00 PM", "table_id": "T-01"},
-        ]
+        cursor.execute("""
+            SELECT r.reservation_id,
+                   r.party_size,
+                   TIME_FORMAT(r.reservation_datetime, '%l:%i %p') AS reservation_time,
+                   CONCAT(COALESCE(p.last_name, 'Guest'), ', ', LEFT(COALESCE(p.first_name, 'W'), 1), '.') AS customer_name,
+                   NULL AS table_id
+            FROM reservation r
+            LEFT JOIN person p ON r.person_id = p.person_id
+            WHERE DATE(r.reservation_datetime) = CURDATE()
+              AND r.status IN ('CONFIRMED', 'PENDING', 'SEATED')
+            ORDER BY r.reservation_datetime
+        """)
+        return cursor.fetchall()
+    except Exception as exc:
+        print(f"Error loading today's reservations from MySQL: {exc}")
+        return []
+    finally:
+        close_connection(conn, cursor)
 
 def save_order_to_db(table_id, employee_id, branch_id, items):
     """
-    SQL: INSERT into Orders table, then INSERT each item into Order_Items table
+    SQL: INSERT into party/orders/order_item tables.
     Returns order_id
     """
+    if not MYSQL_ORDERS_AVAILABLE:
+        return None
+    conn = get_connection()
+    if not conn:
+        return None
+    cursor = conn.cursor(dictionary=True)
     try:
-        conn = get_sql_conn()
-        total = sum(i["price"] * i["qty"] for i in items)
-        cur = conn.execute(
-            "INSERT INTO Orders (table_id, employee_id, branch_id, status, total) VALUES (?,?,?,?,?)",
-            (table_id, employee_id, branch_id, "pending", total)
-        )
-        order_id = cur.lastrowid
+        table_number = int("".join(ch for ch in table_id if ch.isdigit()) or 0)
+        party_size = next((table["seats"] for table in TABLE_LAYOUT if table["id"] == table_id), 1)
+        cursor.execute("""
+            INSERT INTO party (reservation_id, branch_id, table_number, party_size, check_in_datetime)
+            VALUES (NULL, %s, %s, %s, NOW())
+        """, (branch_id, table_number, party_size))
+        party_id = cursor.lastrowid
+
+        subtotal = round(sum(float(i["price"]) * int(i["qty"]) for i in items), 2)
+        tax_amount = round(subtotal * 0.08, 2)
+        total_amount = round(subtotal + tax_amount, 2)
+        cursor.execute("""
+            INSERT INTO orders
+                (party_id, branch_id, employee_id, order_datetime, order_status,
+                 subtotal, tax_amount, total_amount, notes)
+            VALUES (%s, %s, %s, NOW(), 'IN_PROGRESS', %s, %s, %s, %s)
+        """, (party_id, branch_id, employee_id, subtotal, tax_amount, total_amount, f"Employee POS table {table_id}"))
+        order_id = cursor.lastrowid
         for item in items:
-            conn.execute(
-                "INSERT INTO Order_Items (order_id, item_name, quantity, price) VALUES (?,?,?,?)",
-                (order_id, item["name"], item["qty"], item["price"])
-            )
+            cursor.execute("SELECT menu_item_id FROM menu_item WHERE item_name = %s ORDER BY menu_item_id LIMIT 1", (item["name"],))
+            menu_row = cursor.fetchone()
+            if not menu_row:
+                raise ValueError(f"Menu item not found: {item['name']}")
+            cursor.execute("""
+                INSERT INTO order_item (order_id, menu_item_id, quantity, item_price, special_instructions)
+                VALUES (%s, %s, %s, %s, NULL)
+            """, (order_id, menu_row["menu_item_id"], item["qty"], item["price"]))
         conn.commit()
-        conn.close()
         return order_id
     except Exception as e:
-        print(f"DB error saving order: {e}")
+        conn.rollback()
+        print(f"MySQL error saving order: {e}")
         return None
+    finally:
+        close_connection(conn, cursor)
 
 def save_payment_to_db(order_id, payment_type, tip_amount, total):
     """
-    SQL: INSERT into Payment table, UPDATE Orders status = 'completed'
+    SQL: INSERT into payment table, UPDATE orders status = COMPLETED.
     """
-    try:
-        conn = get_sql_conn()
-        conn.execute(
-            "INSERT INTO Payment (order_id, payment_type, tip_amount, total_amount) VALUES (?,?,?,?)",
-            (order_id, payment_type, tip_amount, total)
-        )
-        conn.execute("UPDATE Orders SET status='completed' WHERE id=?", (order_id,))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"DB error saving payment: {e}")
+    payment_map = {
+        "Cash": "CASH",
+        "Credit Card": "CREDIT",
+        "Debit Card": "DEBIT",
+        "Gift Card": "GIFT_CARD",
+        "Mobile Pay": "MOBILE",
+    }
+    db_payment_type = payment_map.get(payment_type, payment_type)
+    payment_id, message = process_payment(order_id, db_payment_type, total, tip_amount)
+    return payment_id, message
 
 def load_menu_from_db():
     """
-    MONGO: collection = menu_items
+    SQL: menu_item table
     Returns list: [{ item_id, name, category, price }]
     """
+    if not MYSQL_ORDERS_AVAILABLE:
+        return []
+    conn = get_connection()
+    if not conn:
+        return []
+    cursor = conn.cursor(dictionary=True)
     try:
-        db = get_mongo_db()
-        if db is None:
-            raise Exception("No MongoDB")
-        items = list(db.menu_items.find({"available": True}, {"_id": 0}))
-        return items
-    except Exception:
-        # Fallback mock menu — Soul By The Sea themed
+        cursor.execute("""
+            SELECT menu_item_id AS item_id,
+                   item_name AS name,
+                   category,
+                   price
+            FROM menu_item
+            WHERE active_status = TRUE
+            ORDER BY category, item_name
+        """)
         return [
-            {"item_id":"M01","name":"Crab Cakes",       "category":"Starters", "price":14.99},
-            {"item_id":"M02","name":"Shrimp Cocktail",  "category":"Starters", "price":12.99},
-            {"item_id":"M03","name":"Clam Chowder",     "category":"Starters", "price":10.99},
-            {"item_id":"M04","name":"Lobster Bisque",   "category":"Starters", "price":13.99},
-            {"item_id":"M05","name":"Grilled Snapper",  "category":"Mains",    "price":28.99},
-            {"item_id":"M06","name":"Shrimp & Grits",   "category":"Mains",    "price":24.99},
-            {"item_id":"M07","name":"Seafood Platter",  "category":"Mains",    "price":38.99},
-            {"item_id":"M08","name":"Blackened Salmon", "category":"Mains",    "price":26.99},
-            {"item_id":"M09","name":"Crab Pasta",       "category":"Mains",    "price":22.99},
-            {"item_id":"M10","name":"Key Lime Pie",     "category":"Desserts", "price": 8.99},
-            {"item_id":"M11","name":"Bread Pudding",    "category":"Desserts", "price": 7.99},
-            {"item_id":"M12","name":"Sweet Potato Pie", "category":"Desserts", "price": 7.99},
-            {"item_id":"M13","name":"Sweet Tea",        "category":"Drinks",   "price": 3.99},
-            {"item_id":"M14","name":"Lemonade",         "category":"Drinks",   "price": 3.99},
-            {"item_id":"M15","name":"House Wine",       "category":"Drinks",   "price": 8.99},
+            {**row, "price": float(row["price"])}
+            for row in cursor.fetchall()
         ]
+    except Exception as exc:
+        print(f"Error loading menu from MySQL: {exc}")
+        return []
+    finally:
+        close_connection(conn, cursor)
+
+
+def load_branch_name(branch_id):
+    if not MYSQL_ORDERS_AVAILABLE:
+        return "Branch Unavailable"
+    conn = get_connection()
+    if not conn:
+        return "Database Offline"
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT branch_name FROM branch WHERE branch_id = %s", (branch_id,))
+        row = cursor.fetchone()
+        return row[0] if row else f"Branch {branch_id}"
+    except Exception:
+        return f"Branch {branch_id}"
+    finally:
+        close_connection(conn, cursor)
+
+
+def get_or_create_pos_employee(branch_id):
+    if not MYSQL_ORDERS_AVAILABLE:
+        return 1
+    conn = get_connection()
+    if not conn:
+        return 1
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT e.person_id, p.first_name, p.last_name
+            FROM employee e
+            JOIN staff s ON e.person_id = s.person_id
+            JOIN person p ON e.person_id = p.person_id
+            WHERE e.branch_id = %s AND e.employment_status = 'ACTIVE'
+            ORDER BY e.person_id
+            LIMIT 1
+        """, (branch_id,))
+        row = cursor.fetchone()
+        if row:
+            return row["person_id"]
+
+        email = f"employee.pos.{branch_id}@soulbythesea.local"
+        cursor.execute("SELECT person_id FROM person WHERE email = %s", (email,))
+        row = cursor.fetchone()
+        if row:
+            person_id = row["person_id"]
+        else:
+            cursor.execute("""
+                INSERT INTO person (first_name, last_name, phone, email)
+                VALUES ('Employee', 'POS', '555-0001', %s)
+            """, (email,))
+            person_id = cursor.lastrowid
+
+        cursor.execute("SELECT person_id FROM employee WHERE person_id = %s", (person_id,))
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO employee (person_id, branch_id, job_title, hire_date, employment_status)
+                VALUES (%s, %s, 'Server', CURDATE(), 'ACTIVE')
+            """, (person_id, branch_id))
+        cursor.execute("SELECT person_id FROM staff WHERE person_id = %s", (person_id,))
+        if not cursor.fetchone():
+            cursor.execute("INSERT INTO staff (person_id, hourly_rate, role) VALUES (%s, 15.00, 'SERVER')", (person_id,))
+        conn.commit()
+        return person_id
+    except Exception as exc:
+        conn.rollback()
+        print(f"Error loading POS employee: {exc}")
+        return 1
+    finally:
+        close_connection(conn, cursor)
+
+
+def validate_manager_id(manager_id):
+    if not MYSQL_ORDERS_AVAILABLE:
+        return None, "MySQL is not connected."
+    conn = get_connection()
+    if not conn:
+        return None, "Database connection failed."
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT m.person_id,
+                   CONCAT(p.first_name, ' ', p.last_name) AS manager_name,
+                   e.branch_id
+            FROM manager m
+            JOIN employee e ON m.person_id = e.person_id
+            JOIN person p ON m.person_id = p.person_id
+            WHERE m.person_id = %s
+              AND e.employment_status = 'ACTIVE'
+        """, (manager_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None, "That ID is not an active manager ID."
+        return row, "Manager verified."
+    except Exception as exc:
+        return None, f"Manager lookup failed: {exc}"
+    finally:
+        close_connection(conn, cursor)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STATIC TABLE LAYOUT
@@ -243,33 +380,42 @@ class FLOWApp(tk.Tk):
         super().__init__()
         self.title("FLOW POS — Soul By The Sea")
         self.configure(bg="#0D1117")
-        self.attributes("-zoomed", True)         # open maximised; use fullscreen on Mac
+        try:
+            self.attributes("-zoomed", True)
+        except tk.TclError:
+            self.attributes("-fullscreen", True)
 
         # App state
         self.table_statuses  = {}     # loaded from MongoDB
         self.orders          = {}     # { table_id: [{ name, price, qty }] }
+        self.table_order_ids = {}     # { table_id: MySQL order_id }
         self.selected_table  = None
         self.current_order_items = [] # items shown in order panel
         self.menu_items      = []     # loaded from MongoDB
         self.reservations    = []     # loaded from SQL
+        self.web_orders      = []     # active customer website orders from MySQL
         self.active_menu_cat = "All"
+        self.cat_var         = tk.StringVar(value="All")
         self.pay_method      = tk.StringVar(value="")
         self.tip_pct         = tk.IntVar(value=0)
 
-        # Logged-in employee info (load from SQL Employee table in production)
-        self.employee_name   = "James Carter"
-        self.branch_name     = "Main Branch"
-        self.employee_id     = 1
+        # Demo employee context. Orders are loaded from MySQL across branches so
+        # website orders appear during the classroom demo.
+        self.employee_name   = "Employee POS"
         self.branch_id       = 1
+        self.employee_id     = get_or_create_pos_employee(self.branch_id)
+        self.branch_name     = load_branch_name(self.branch_id)
 
         self._build_ui()
         self._load_data()
+        self._schedule_auto_refresh()
 
     # ── Load data from databases ───────────────────────────────────────────
     def _load_data(self):
         self.table_statuses = load_table_statuses()
         self.menu_items     = load_menu_from_db()
         self.reservations   = load_todays_reservations()
+        self.web_orders      = self._load_web_orders()
         # Build reservation lookup: table_id → reservation info
         self.res_lookup = {}
         for r in self.reservations:
@@ -281,6 +427,27 @@ class FLOWApp(tk.Tk):
                 self.res_lookup[tid] = f"{name}  ·  {time_}  ·  Party {size}"
         self._refresh_floor()
         self._refresh_sidebar()
+
+    def _load_web_orders(self):
+        if not MYSQL_ORDERS_AVAILABLE:
+            return []
+        try:
+            return get_active_orders()
+        except Exception as exc:
+            print(f"Error loading active MySQL orders: {exc}")
+            return []
+
+    def _refresh_web_orders(self):
+        self.web_orders = self._load_web_orders()
+        self._refresh_sidebar()
+
+    def _schedule_auto_refresh(self):
+        self.after(5000, self._auto_refresh_web_orders)
+
+    def _auto_refresh_web_orders(self):
+        self.web_orders = self._load_web_orders()
+        self._refresh_sidebar()
+        self._schedule_auto_refresh()
 
     # ── Build UI ───────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -336,10 +503,21 @@ class FLOWApp(tk.Tk):
         ttk.Separator(self.sidebar, orient="horizontal").pack(fill="x", pady=8)
 
         # Active orders
-        tk.Label(self.sidebar, text="ACTIVE ORDERS · SQL",
-                 bg="#161B22", fg="#444D56", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=12, pady=(0,4))
+        orders_head = tk.Frame(self.sidebar, bg="#161B22")
+        orders_head.pack(fill="x", padx=12, pady=(0,4))
+        tk.Label(orders_head, text="ACTIVE ORDERS · SQL",
+                 bg="#161B22", fg="#444D56", font=("Segoe UI", 8, "bold")).pack(side="left")
+        tk.Button(orders_head, text="Refresh", bg="#1C2128", fg="#8B949E",
+                  font=("Segoe UI", 8, "bold"), relief="flat", bd=0, cursor="hand2",
+                  command=self._refresh_web_orders).pack(side="right")
         self.orders_frame = tk.Frame(self.sidebar, bg="#161B22")
         self.orders_frame.pack(fill="both", expand=True, padx=8)
+
+        ttk.Separator(self.sidebar, orient="horizontal").pack(fill="x", pady=8)
+        tk.Button(self.sidebar, text="Manager Access", bg="#0F2419", fg="#3FB950",
+                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
+                  padx=10, pady=8, cursor="hand2",
+                  command=self._open_manager_access).pack(fill="x", padx=12, pady=(0, 10))
 
         # ── FLOOR CANVAS ──────────────────────────────────────────────────
         canvas_frame = tk.Frame(body, bg="#0D1117")
@@ -416,7 +594,9 @@ class FLOWApp(tk.Tk):
         ttk.Separator(self.panel, orient="horizontal").pack(fill="x", pady=4)
 
         # Tab bar
-        self.panel_tab = tk.StringVar(value="add")
+        default_tab = getattr(self, "pending_panel_tab", "add")
+        self.pending_panel_tab = "add"
+        self.panel_tab = tk.StringVar(value=default_tab)
         tab_bar = tk.Frame(self.panel, bg="#1C2128")
         tab_bar.pack(fill="x")
         for tab_id, tab_name in [("add","Add Items"),("order","Order"),("payment","Payment")]:
@@ -460,18 +640,15 @@ class FLOWApp(tk.Tk):
         f = self.tab_content
 
         # Category filter
-        cats = ["All","Starters","Mains","Desserts","Drinks"]
+        cats = ["All", "Appetizers", "Above Sea", "Sea Level", "Under the Sea", "Sides", "Drinks", "Desserts"]
         cat_bar = tk.Frame(f, bg="#161B22")
         cat_bar.pack(fill="x", padx=6, pady=6)
-        self.cat_var = tk.StringVar(value=self.active_menu_cat)
-        for c in cats:
-            btn = tk.Radiobutton(cat_bar, text=c, variable=self.cat_var,
-                                 value=c, bg="#1C2128", fg="#8B949E",
-                                 selectcolor="#D4A843", activebackground="#1C2128",
-                                 font=("Segoe UI", 9, "bold"), indicatoron=False,
-                                 relief="flat", padx=6, pady=3, cursor="hand2",
-                                 command=lambda: self._filter_menu())
-            btn.pack(side="left", padx=2)
+        tk.Label(cat_bar, text="Category", bg="#161B22", fg="#8B949E",
+                 font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
+        self.cat_var.set(self.active_menu_cat)
+        category_select = ttk.Combobox(cat_bar, textvariable=self.cat_var, values=cats, state="readonly")
+        category_select.pack(side="left", fill="x", expand=True)
+        category_select.bind("<<ComboboxSelected>>", lambda event: self._filter_menu())
 
         # Scrollable menu list
         container = tk.Frame(f, bg="#161B22")
@@ -482,7 +659,8 @@ class FLOWApp(tk.Tk):
         sb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
         inner = tk.Frame(canvas, bg="#161B22")
-        canvas.create_window((0,0), window=inner, anchor="nw")
+        inner_window = canvas.create_window((0,0), window=inner, anchor="nw")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(inner_window, width=event.width))
         inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
         order = self.orders.get(self.selected_table, [])
@@ -561,6 +739,15 @@ class FLOWApp(tk.Tk):
         tk.Label(total_row, text=f"${total:.2f}", bg="#161B22", fg="#D4A843",
                  font=("Segoe UI", 14, "bold")).pack(side="right")
 
+        sent_order_id = self.table_order_ids.get(self.selected_table)
+        btn_text = f"Sent to Kitchen · Order #{sent_order_id}" if sent_order_id else f"Send to Kitchen — ${total:.2f}"
+        btn_bg = "#0F2419" if sent_order_id else "#1C2128"
+        btn_fg = "#3FB950" if sent_order_id else "#D4A843"
+        tk.Button(inner, text=btn_text, bg=btn_bg, fg=btn_fg,
+                  font=("Segoe UI", 11, "bold"), relief="flat", bd=0,
+                  padx=10, pady=10, cursor="hand2",
+                  command=self._send_order).pack(fill="x", pady=(10, 0))
+
     def _build_payment_tab(self):
         f = self.tab_content
         order = self.orders.get(self.selected_table, [])
@@ -571,9 +758,10 @@ class FLOWApp(tk.Tk):
             return
 
         sub = sum(i["price"] * i["qty"] for i in order)
+        tax = round(sub * 0.08, 2)
         tip_pct = self.tip_pct.get()
         tip_amt = sub * (tip_pct / 100)
-        grand   = sub + tip_amt
+        grand   = sub + tax + tip_amt
 
         scr = tk.Frame(f, bg="#161B22")
         scr.pack(fill="both", expand=True, padx=10, pady=8)
@@ -586,12 +774,17 @@ class FLOWApp(tk.Tk):
         tk.Label(row, text="Subtotal", bg="#1C2128", fg="#8B949E", font=("Segoe UI",10)).pack(side="left")
         tk.Label(row, text=f"${sub:.2f}", bg="#1C2128", fg="#E6EDF3", font=("Segoe UI",12,"bold")).pack(side="right")
 
+        tax_row = tk.Frame(scr, bg="#1C2128", pady=6, padx=10)
+        tax_row.pack(fill="x", pady=2)
+        tk.Label(tax_row, text="Tax", bg="#1C2128", fg="#8B949E", font=("Segoe UI",10)).pack(side="left")
+        tk.Label(tax_row, text=f"${tax:.2f}", bg="#1C2128", fg="#E6EDF3", font=("Segoe UI",12,"bold")).pack(side="right")
+
         # Payment method
         tk.Label(scr, text="Payment Method", bg="#161B22", fg="#8B949E",
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(10,4))
         methods_f = tk.Frame(scr, bg="#161B22")
         methods_f.pack(fill="x")
-        for m in ["Cash","Credit Card","Debit Card","Mobile Pay"]:
+        for m in ["Cash","Credit Card","Debit Card","Gift Card","Mobile Pay"]:
             tk.Radiobutton(methods_f, text=m, variable=self.pay_method, value=m,
                            bg="#1C2128", fg="#E6EDF3", selectcolor="#D4A843",
                            activebackground="#1C2128", font=("Segoe UI",10),
@@ -737,10 +930,35 @@ class FLOWApp(tk.Tk):
 
         for w in self.orders_frame.winfo_children():
             w.destroy()
-        active = [(tid, items) for tid, items in self.orders.items() if items]
-        if not active:
-            tk.Label(self.orders_frame, text="No active orders", bg="#161B22",
+        active = [(tid, items) for tid, items in self.orders.items() if items and tid not in self.table_order_ids]
+        if not active and not self.web_orders:
+            empty_text = "No active orders"
+            if not MYSQL_ORDERS_AVAILABLE:
+                empty_text = f"MySQL orders unavailable: {MYSQL_IMPORT_ERROR}"
+            tk.Label(self.orders_frame, text=empty_text, bg="#161B22",
                      fg="#444D56", font=("Segoe UI",10,"italic")).pack(anchor="w", pady=4)
+        for order in self.web_orders:
+            order_id = order.get("order_id")
+            total = float(order.get("total_amount") or 0)
+            table_number = order.get("table_number")
+            branch_name = order.get("branch_name") or f"Branch {order.get('branch_id', '')}".strip()
+            table_label = "Web Order" if table_number in (None, 0, "0") else f"Table {table_number}"
+            notes = order.get("notes") or ""
+            if notes.startswith("Employee POS table "):
+                table_label = notes.replace("Employee POS table ", "", 1)
+            f = tk.Frame(self.orders_frame, bg="#102A2A", pady=4, padx=8, cursor="hand2")
+            f.pack(fill="x", pady=2)
+            top = tk.Frame(f, bg="#102A2A")
+            top.pack(fill="x")
+            tk.Label(top, text=f"Order #{order_id}", bg="#102A2A", fg="#D4A843",
+                     font=("Segoe UI",10,"bold")).pack(side="left")
+            tk.Label(top, text=f"${total:.2f}", bg="#102A2A", fg="#3FB950",
+                     font=("Segoe UI",10,"bold")).pack(side="right")
+            tk.Label(f, text=f"{table_label} · {branch_name} · Tap for items", bg="#102A2A", fg="#8B949E",
+                     font=("Segoe UI",9), wraplength=160).pack(anchor="w")
+            f.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
+            for child in f.winfo_children():
+                child.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
         for tid, items in active:
             total = sum(i["price"]*i["qty"] for i in items)
             f = tk.Frame(self.orders_frame, bg="#1C2128", pady=4, padx=8, cursor="hand2")
@@ -756,10 +974,82 @@ class FLOWApp(tk.Tk):
                      font=("Segoe UI",9), wraplength=160).pack(anchor="w")
             f.bind("<Button-1>", lambda e, i=tid: self._on_table_click(i))
 
+    def _show_web_order(self, order_id):
+        items = get_order_items(order_id) if MYSQL_ORDERS_AVAILABLE else []
+        window = tk.Toplevel(self)
+        window.title(f"Web Order #{order_id}")
+        window.configure(bg="#161B22")
+        window.geometry("420x420")
+
+        tk.Label(window, text=f"Web Order #{order_id}", bg="#161B22", fg="#D4A843",
+                 font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
+        tk.Label(window, text="Paid online · Sent from customer website", bg="#161B22", fg="#8B949E",
+                 font=("Segoe UI", 10)).pack(anchor="w", padx=16, pady=(0, 10))
+
+        body = tk.Frame(window, bg="#161B22")
+        body.pack(fill="both", expand=True, padx=16)
+        if not items:
+            tk.Label(body, text="No items found for this order.", bg="#161B22", fg="#8B949E",
+                     font=("Segoe UI", 10)).pack(anchor="w", pady=8)
+        for item in items:
+            row = tk.Frame(body, bg="#1C2128", pady=7, padx=10)
+            row.pack(fill="x", pady=3)
+            qty = item.get("quantity") or 1
+            name = item.get("item_name") or "Menu item"
+            line_total = float(item.get("line_total") or 0)
+            tk.Label(row, text=f"{qty}x {name}", bg="#1C2128", fg="#E6EDF3",
+                     font=("Segoe UI", 11, "bold")).pack(side="left")
+            tk.Label(row, text=f"${line_total:.2f}", bg="#1C2128", fg="#3FB950",
+                     font=("Segoe UI", 10, "bold")).pack(side="right")
+            notes = item.get("special_instructions")
+            if notes:
+                tk.Label(row, text=f"Notes: {notes}", bg="#1C2128", fg="#D4A843",
+                         font=("Segoe UI", 9), wraplength=340, justify="left").pack(anchor="w", pady=(4, 0))
+
+        actions = tk.Frame(window, bg="#161B22")
+        actions.pack(fill="x", padx=16, pady=16)
+        tk.Button(actions, text="Mark Served", bg="#1C2128", fg="#D4A843",
+                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=10, pady=8,
+                  command=lambda: self._update_web_order(order_id, "SERVED", window)).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        tk.Button(actions, text="Mark Completed", bg="#0F2419", fg="#3FB950",
+                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=10, pady=8,
+                  command=lambda: self._update_web_order(order_id, "COMPLETED", window)).pack(side="left", fill="x", expand=True)
+
+    def _update_web_order(self, order_id, status, window=None):
+        if not MYSQL_ORDERS_AVAILABLE:
+            messagebox.showerror("Orders Unavailable", "MySQL order functions are unavailable.")
+            return
+        ok, message = update_order_status(order_id, status)
+        if not ok:
+            messagebox.showerror("Order Update Failed", message)
+            return
+        if window:
+            window.destroy()
+        messagebox.showinfo("Order Updated", message)
+        self.web_orders = self._load_web_orders()
+        self._refresh_sidebar()
+
+    def _open_manager_access(self):
+        manager_id = simpledialog.askinteger("Manager Access", "Enter manager ID:", parent=self, minvalue=1)
+        if not manager_id:
+            return
+        manager, message = validate_manager_id(manager_id)
+        if not manager:
+            messagebox.showerror("Access Denied", message)
+            return
+
+        manager_path = os.path.join(PROJECT_ROOT, "frontend", "manager_ui.py")
+        try:
+            subprocess.Popen([sys.executable, manager_path])
+            messagebox.showinfo("Manager Access", f"Manager verified: {manager['manager_name']}")
+        except Exception as exc:
+            messagebox.showerror("Manager Screen Failed", f"Could not open manager screen: {exc}")
+
     # ── Actions ────────────────────────────────────────────────────────────
     def _on_table_click(self, table_id):
         self.selected_table  = table_id
         self.active_menu_cat = "All"
+        self.pending_panel_tab = "add"
         self.pay_method.set("")
         self.tip_pct.set(0)
         self._build_order_panel()
@@ -817,13 +1107,35 @@ class FLOWApp(tk.Tk):
         order = self.orders.get(self.selected_table, [])
         if not order:
             return
+        if self.selected_table in self.table_order_ids:
+            messagebox.showinfo("Order Already Sent", f"Order #{self.table_order_ids[self.selected_table]} is already active for {self.selected_table}.")
+            return
+        if MYSQL_ORDERS_AVAILABLE:
+            inventory_items = [{"name": item["name"], "quantity": item["qty"]} for item in order]
+            ok, shortages = check_order_inventory(self.branch_id, inventory_items)
+            if not ok:
+                messagebox.showerror("Item Sold Out", "Cannot send order:\n" + "\n".join(shortages))
+                return
+        else:
+            messagebox.showerror("Database Unavailable", "MySQL order functions are unavailable.")
+            return
         # SQL: INSERT into Orders + Order_Items tables
         order_id = save_order_to_db(self.selected_table, self.employee_id, self.branch_id, order)
+        if not order_id:
+            messagebox.showerror("Order Not Saved", "Could not save this order to MySQL.")
+            return
+        ok, inventory_message = decrement_order_inventory(self.branch_id, [{"name": item["name"], "quantity": item["qty"]} for item in order])
+        if not ok:
+            update_order_status(order_id, "CANCELLED")
+            messagebox.showerror("Inventory Update Failed", inventory_message)
+            return
+        self.table_order_ids[self.selected_table] = order_id
+        self.web_orders = self._load_web_orders()
         # MongoDB: update table_availability status → "occupied"
         self.table_statuses[self.selected_table] = "occupied"
         update_table_status_db(self.selected_table, "occupied")
         messagebox.showinfo("Order Sent", f"Order sent to kitchen!\nTable: {self.selected_table}\nOrder ID: {order_id or 'N/A'}")
-        self.selected_table = None
+        self.pending_panel_tab = "payment"
         self._build_order_panel()
         self._refresh_floor()
         self._refresh_sidebar()
@@ -832,12 +1144,20 @@ class FLOWApp(tk.Tk):
         order = self.orders.get(self.selected_table, [])
         if not order or not self.pay_method.get():
             return
+        order_id = self.table_order_ids.get(self.selected_table)
+        if not order_id:
+            messagebox.showerror("Order Not Sent", "Send this table order to the kitchen before taking payment.")
+            return
         # SQL: INSERT into Payment table, UPDATE Orders status
-        save_payment_to_db(None, self.pay_method.get(), tip_amt, grand)
+        payment_id, message = save_payment_to_db(order_id, self.pay_method.get(), tip_amt, grand)
+        if not payment_id:
+            messagebox.showerror("Payment Failed", message)
+            return
         # MongoDB: update table → "dirty"
         self.table_statuses[self.selected_table] = "dirty"
         update_table_status_db(self.selected_table, "dirty")
         self.orders[self.selected_table] = []
+        self.table_order_ids.pop(self.selected_table, None)
         messagebox.showinfo("Payment Confirmed",
                             f"Payment received!\nMethod: {self.pay_method.get()}\nTotal: ${grand:.2f}")
         self.selected_table = None
@@ -847,6 +1167,7 @@ class FLOWApp(tk.Tk):
 
     def _clear_table(self):
         self.orders[self.selected_table] = []
+        self.table_order_ids.pop(self.selected_table, None)
         self.table_statuses[self.selected_table] = "dirty"
         update_table_status_db(self.selected_table, "dirty")
         self._close_panel()

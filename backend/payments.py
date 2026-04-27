@@ -24,6 +24,24 @@
 from config.db_config import get_connection, close_connection
 
 
+def _ensure_payment_card_last4_column(cursor):
+    """Adds the masked-card storage column for existing local databases."""
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) AS column_exists
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'payment'
+              AND COLUMN_NAME = 'card_last4'
+        """)
+        row = cursor.fetchone()
+        column_exists = row["column_exists"] if isinstance(row, dict) else row[0]
+        if column_exists == 0:
+            cursor.execute("ALTER TABLE payment ADD COLUMN card_last4 VARCHAR(4) NULL AFTER payment_type")
+    except Exception:
+        pass
+
+
 def process_payment(order_id, payment_type, amount, tip_amount=0.00):
     """
     Records a payment for an order.
@@ -37,6 +55,8 @@ def process_payment(order_id, payment_type, amount, tip_amount=0.00):
     cursor = conn.cursor()
 
     try:
+        _ensure_payment_card_last4_column(cursor)
+
         # Insert payment record
         cursor.execute("""
             INSERT INTO payment (order_id, payment_type, amount, tip_amount, payment_datetime)
@@ -71,8 +91,10 @@ def get_payment_by_order(order_id):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        _ensure_payment_card_last4_column(cursor)
+
         cursor.execute("""
-            SELECT payment_id, order_id, payment_type,
+            SELECT payment_id, order_id, payment_type, card_last4,
                    amount, tip_amount, payment_datetime
             FROM payment
             WHERE order_id = %s
@@ -96,8 +118,10 @@ def get_payment_by_id(payment_id):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        _ensure_payment_card_last4_column(cursor)
+
         cursor.execute("""
-            SELECT pa.payment_id, pa.order_id, pa.payment_type,
+            SELECT pa.payment_id, pa.order_id, pa.payment_type, pa.card_last4,
                    pa.amount, pa.tip_amount, pa.payment_datetime,
                    o.subtotal, o.tax_amount, o.total_amount,
                    b.branch_name
@@ -124,8 +148,10 @@ def get_payments_by_branch(branch_id):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        _ensure_payment_card_last4_column(cursor)
+
         cursor.execute("""
-            SELECT pa.payment_id, pa.payment_type, pa.amount,
+            SELECT pa.payment_id, pa.payment_type, pa.card_last4, pa.amount,
                    pa.tip_amount, pa.payment_datetime,
                    o.order_id, o.subtotal, o.tax_amount, o.total_amount
             FROM payment pa
@@ -151,8 +177,10 @@ def get_payments_by_date(branch_id, date):
     cursor = conn.cursor(dictionary=True)
 
     try:
+        _ensure_payment_card_last4_column(cursor)
+
         cursor.execute("""
-            SELECT pa.payment_id, pa.payment_type, pa.amount,
+            SELECT pa.payment_id, pa.payment_type, pa.card_last4, pa.amount,
                    pa.tip_amount, pa.payment_datetime,
                    o.order_id, o.total_amount
             FROM payment pa

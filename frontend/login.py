@@ -1,5 +1,5 @@
 # login.py
-#
+#Created by Jonah Goodwine
 #     FLOW - Enterprise Restaurant Management System
 #
 # This file is the login screen for the FLOW system. The user enters one
@@ -13,20 +13,40 @@
 # error in that case.
 
 
+import os
+import sys
 import tkinter as tk
+import webbrowser
 from tkinter import ttk
 
-# color palette -- matches the rest of the FLOW UI
-BG_DARK   = "#0D1117"
-BG_PANEL  = "#161B22"
-GOLD      = "#D4A843"
-TEXT      = "#E6EDF3"
-MUTED     = "#8B949E"
-RED       = "#F85149"
+# project root on path so backend.* and config.* imports resolve
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
-# valid dummy logins -- username doubles as the role, password is always "123"
-VALID_ROLES    = ["Customer", "Manager", "Staff", "Admin"]
+try:
+    from backend.auth import login_user as db_login_user
+    AUTH_AVAILABLE = True
+except Exception:
+    AUTH_AVAILABLE = False
+
+# color palette -- matches the Soul by the Sea / Customer UI ocean theme
+BG_DARK  = "#0a0a0f"
+BG_PANEL = "#0d1b2a"
+TEAL     = "#00bfa5"
+TEXT     = "#ffffff"
+MUTED    = "#9ab5c0"
+RED      = "#F85149"
+
+# images folder sits one level above frontend/
+IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "images")
+
+# valid employee/admin dummy logins -- fallback when DB is unavailable
+VALID_ROLES    = ["Manager", "Staff", "Admin"]
 DUMMY_PASSWORD = "123"
 
 
@@ -70,8 +90,12 @@ class LoginScreen(tk.Tk):
         super().__init__()
         self.title("FLOW - Login")
         self.configure(bg=BG_DARK)
-        self.geometry("420x500")
+        self.geometry("560x720")
         self.resizable(False, False)
+
+        # keep image references alive so tkinter doesn't garbage-collect them
+        self.soul_logo_img = None
+        self.flow_logo_img = None
 
         # form values
         self.username_var = tk.StringVar()
@@ -80,56 +104,116 @@ class LoginScreen(tk.Tk):
         self.build_ui()
 
 
+    def _load_image(self, filename, width, height):
+        """Load and resize a PNG from the images folder. Returns None on failure."""
+        path = os.path.join(IMAGES_DIR, filename)
+        if PIL_AVAILABLE:
+            try:
+                img = Image.open(path).resize((width, height), Image.LANCZOS)
+                return ImageTk.PhotoImage(img)
+            except Exception:
+                return None
+        try:
+            # native tk.PhotoImage works for PNG without PIL but can't resize smoothly
+            return tk.PhotoImage(file=path)
+        except Exception:
+            return None
+
+
     # builds all the widgets on the login window
     def build_ui(self):
 
-        # top branding strip
-        header = tk.Frame(self, bg=BG_PANEL, height=90)
-        header.pack(fill="x", side="top")
-        header.pack_propagate(False)
+        # full-window background frame so we can center the card
+        bg_frame = tk.Frame(self, bg=BG_DARK)
+        bg_frame.pack(fill="both", expand=True)
 
-        tk.Label(header, text="Soul By The Sea", bg=BG_PANEL,
-                 fg=GOLD, font=("Segoe UI", 16, "bold")).pack(pady=(18, 0))
-        tk.Label(header, text="FLOW Login", bg=BG_PANEL,
-                 fg=MUTED, font=("Segoe UI", 9)).pack()
+        # centered login card
+        card = tk.Frame(bg_frame, bg=BG_PANEL)
+        card.place(relx=0.5, rely=0.5, anchor="center")
 
-        # form area
-        form = tk.Frame(self, bg=BG_DARK)
-        form.pack(fill="both", expand=True, padx=40, pady=24)
+        # ---- Soul by the Sea logo ----
+        self.soul_logo_img = self._load_image("SoulByTheSeaLogo.png", 300, 118)
+        if self.soul_logo_img:
+            tk.Label(card, image=self.soul_logo_img,
+                     bg=BG_PANEL).pack(pady=(32, 0))
+        else:
+            # text fallback if image can't load
+            tk.Label(card, text="Soul by the Sea",
+                     font=("Georgia", 22, "bold"),
+                     fg=TEAL, bg=BG_PANEL).pack(pady=(32, 0))
 
-        # username field
-        tk.Label(form, text="Username", bg=BG_DARK, fg=TEXT,
+        tk.Label(card, text="Restaurant Management System",
+                 font=("Segoe UI", 9), fg=MUTED, bg=BG_PANEL
+                 ).pack(pady=(4, 20))
+
+        # ---- customer entrance (no login required) ----
+        cust_frame = tk.Frame(card, bg=BG_PANEL)
+        cust_frame.pack(fill="x", padx=50, pady=(0, 8))
+
+        tk.Button(cust_frame, text="Order Here  →",
+                  bg=TEAL, fg="#000000",
+                  activebackground="#009980", activeforeground="#000000",
+                  relief="flat", font=("Segoe UI", 12, "bold"),
+                  cursor="hand2", command=self.open_customer_ui
+                  ).pack(fill="x", ipady=11)
+
+        tk.Label(cust_frame, text="Tap to browse the menu and place an order",
+                 font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL
+                 ).pack(pady=(5, 0))
+
+        ttk.Separator(card, orient="horizontal").pack(fill="x", padx=40, pady=(14, 0))
+
+        # ---- employee / admin login form ----
+        tk.Label(card, text="Employee & Admin Login",
+                 font=("Segoe UI", 9, "bold"), fg=MUTED, bg=BG_PANEL
+                 ).pack(pady=(10, 0))
+
+        form = tk.Frame(card, bg=BG_PANEL)
+        form.pack(padx=50, pady=(10, 24))
+
+        tk.Label(form, text="Username", bg=BG_PANEL, fg=TEXT,
                  font=("Segoe UI", 10)).pack(anchor="w", pady=(8, 2))
         user_entry = tk.Entry(form, textvariable=self.username_var,
-                              bg=BG_PANEL, fg=TEXT, insertbackground=TEXT,
-                              relief="flat", font=("Segoe UI", 11))
-        user_entry.pack(fill="x", ipady=6)
+                              bg=BG_DARK, fg=TEXT, insertbackground=TEXT,
+                              relief="flat", font=("Segoe UI", 11), width=32)
+        user_entry.pack(fill="x", ipady=7)
 
-        # password field
-        tk.Label(form, text="Password", bg=BG_DARK, fg=TEXT,
+        tk.Label(form, text="Password", bg=BG_PANEL, fg=TEXT,
                  font=("Segoe UI", 10)).pack(anchor="w", pady=(14, 2))
         pass_entry = tk.Entry(form, textvariable=self.password_var, show="*",
-                              bg=BG_PANEL, fg=TEXT, insertbackground=TEXT,
-                              relief="flat", font=("Segoe UI", 11))
-        pass_entry.pack(fill="x", ipady=6)
+                              bg=BG_DARK, fg=TEXT, insertbackground=TEXT,
+                              relief="flat", font=("Segoe UI", 11), width=32)
+        pass_entry.pack(fill="x", ipady=7)
 
-        # sign in button
-        btn = tk.Button(form, text="Sign In", bg=GOLD, fg="#000000",
-                        activebackground="#B8902E", relief="flat",
-                        font=("Segoe UI", 11, "bold"), cursor="hand2",
-                        command=self.try_login)
-        btn.pack(fill="x", pady=(28, 8), ipady=8)
+        tk.Button(form, text="Sign In",
+                  bg=TEAL, fg="#000000",
+                  activebackground="#009980", activeforeground="#000000",
+                  relief="flat", font=("Segoe UI", 11, "bold"),
+                  cursor="hand2", command=self.try_login
+                  ).pack(fill="x", pady=(26, 6), ipady=9)
 
-        # error / status label
-        self.status_label = tk.Label(form, text="", bg=BG_DARK, fg=RED,
-                                      font=("Segoe UI", 9))
-        self.status_label.pack(pady=(6, 0))
+        self.status_label = tk.Label(form, text="", bg=BG_PANEL, fg=RED,
+                                     font=("Segoe UI", 9))
+        self.status_label.pack(pady=(4, 0))
 
-        # tiny hint at the bottom
-        hint = tk.Label(form,
-                        text="Dummy logins:  Customer / Manager / Staff / Admin   ·   pw: 123",
-                        bg=BG_DARK, fg=MUTED, font=("Segoe UI", 8, "italic"))
-        hint.pack(side="bottom", pady=(10, 0))
+        ttk.Separator(card, orient="horizontal").pack(fill="x", padx=40, pady=(16, 0))
+
+        # ---- FLOW logo (bottom of card) ----
+        self.flow_logo_img = self._load_image("FlowLogo.png", 240, 96)
+        flow_bottom = tk.Frame(card, bg=BG_PANEL)
+        flow_bottom.pack(pady=(16, 32))
+
+        if self.flow_logo_img:
+            tk.Label(flow_bottom, image=self.flow_logo_img,
+                     bg=BG_PANEL).pack(pady=(0, 8))
+        else:
+            tk.Label(flow_bottom, text="Powered by FLOW",
+                     font=("Segoe UI", 9), fg=MUTED, bg=BG_PANEL).pack(pady=(0, 8))
+
+        tk.Label(flow_bottom,
+                 text="Manager / Staff / Admin   ·   pw: 123",
+                 font=("Segoe UI", 8, "italic"), fg=MUTED, bg=BG_PANEL
+                 ).pack()
 
         # let the user press Enter to submit
         self.bind("<Return>", lambda e: self.try_login())
@@ -141,34 +225,43 @@ class LoginScreen(tk.Tk):
         username = self.username_var.get().strip()
         password = self.password_var.get().strip()
 
-        # basic input check
         if username == "" or password == "":
             self.status_label.config(text="Please enter username and password.")
             return
 
-        # check the password
+        # try real DB auth first
+        if AUTH_AVAILABLE:
+            user, msg = db_login_user(username, password)
+            if user:
+                role = user["role"].capitalize()
+                if role in VALID_ROLES:
+                    self.status_label.config(text="")
+                    self.open_role_ui(role)
+                    return
+            # if DB is up but credentials are wrong, show the error and stop
+            if "connection" not in msg.lower():
+                self.status_label.config(text=msg)
+                return
+            # DB is down — fall through to dummy login below
+
+        # dummy fallback (used when DB is unavailable)
         if password != DUMMY_PASSWORD:
             self.status_label.config(text="Invalid password.")
             return
 
-        # normalize the username so "manager" / "MANAGER" / "Manager" all work
         role = username.capitalize()
-
-        # check the username is one of the four valid roles
-        found = False
-        for r in VALID_ROLES:
-            if r == role:
-                found = True
-                break
-
-        if not found:
+        if role not in VALID_ROLES:
             self.status_label.config(text="Unknown user. Try Customer, Manager, Staff, or Admin.")
             return
 
-        # success -- close login and try to open the matching UI
         self.status_label.config(text="")
         self.open_role_ui(role)
 
+
+    def open_customer_ui(self):
+        """Opens the browser-based customer ordering screen."""
+        self.destroy()
+        webbrowser.open("http://127.0.0.1:5001")
 
     # closes the login window and tries to launch the matching UI for
     # the role. if the import or launch fails, drop into the black
@@ -178,17 +271,7 @@ class LoginScreen(tk.Tk):
 
         launched = False
 
-        if role == "Customer":
-            # customer front end file name
-            try:
-                from customer_ui import CustomerUI
-                app = CustomerUI()
-                app.mainloop()
-                launched = True
-            except Exception as e:
-                print(f"Could not load Customer UI: {e}")
-
-        elif role == "Manager":
+        if role == "Manager":
             try:
                 from manager_ui import ManagerUI
                 app = ManagerUI(manager_name="Manager", branch_id=1)
@@ -198,18 +281,22 @@ class LoginScreen(tk.Tk):
                 print(f"Could not load Manager UI: {e}")
 
         elif role == "Staff":
-            # staff front end file name (currently "Front-end Screen.py", will be renamed)
-            launched = self.launch_staff_ui()
-
-        elif role == "Admin":
-            # admin front end file name
             try:
-                from admin_ui import AdminUI
-                app = AdminUI()
+                from employee_ui import FLOWApp
+                app = FLOWApp()
                 app.mainloop()
                 launched = True
             except Exception as e:
-                print(f"Could not load Admin UI: {e}")
+                print(f"Could not load Staff UI: {e}")
+
+        elif role == "Admin":
+            try:
+                from HQ_ui import HQApp
+                app = HQApp()
+                app.mainloop()
+                launched = True
+            except Exception as e:
+                print(f"Could not load Admin/HQ UI: {e}")
 
         # if the real UI could not be loaded, show the placeholder
         if not launched:
@@ -217,38 +304,6 @@ class LoginScreen(tk.Tk):
             placeholder.mainloop()
 
 
-    # tries to launch the staff UI. handles the legacy "Front-end Screen.py"
-    # filename which has a space in it (cannot use a normal import).
-    def launch_staff_ui(self):
-
-        # try the future clean module name first
-        try:
-            from staff_ui import StaffUI
-            app = StaffUI()
-            app.mainloop()
-            return True
-        except Exception:
-            pass  # fall through to the legacy file load
-
-        # fall back to the current spaced filename
-        try:
-            import importlib.util
-            import os
-
-            # build a path to "Front-end Screen.py" sitting next to this file
-            here = os.path.dirname(os.path.abspath(__file__))
-            path = os.path.join(here, "Front-end Screen.py")
-
-            spec   = importlib.util.spec_from_file_location("front_end_screen", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            app = module.FLOWApp()
-            app.mainloop()
-            return True
-        except Exception as e:
-            print(f"Could not load Staff UI: {e}")
-            return False
 
 
 # minimal driver

@@ -1,4 +1,5 @@
 # manager_ui.py
+# Created by Zoe Battle
 #
 #     FLOW - Enterprise Restaurant Management System
 #
@@ -13,9 +14,14 @@
 # you can see the layout without MySQL set up yet.
 
 
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date
+
+# project root on path so config.* imports resolve from any working directory
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 # try to grab the project DB connection
 try:

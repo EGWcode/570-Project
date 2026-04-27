@@ -4,7 +4,7 @@
 --     CSC 570 Sp 26'
 
 --     Original Schema Created by Jonah Goodwine - March 6, 2026
---     Updated/Refined by Day Ekoi - April 6-9, 2026
+--     Updated by Day Ekoi - April 6, 2026
 --
 -- This file defines the full relational database schema for the FLOW system.
 -- It creates the flow_db MySQL database and all associated tables that support
@@ -118,6 +118,7 @@ CREATE TABLE menu_item (
     category VARCHAR(30) NOT NULL,
     description VARCHAR(120),
     price DECIMAL(10,2) NOT NULL,
+    tags VARCHAR(30) NULL,
     active_status BOOLEAN NOT NULL DEFAULT TRUE,
     CONSTRAINT chk_menu_item_price
         CHECK (price > 0)
@@ -125,7 +126,7 @@ CREATE TABLE menu_item (
 
 CREATE TABLE reservation (
     reservation_id INT AUTO_INCREMENT PRIMARY KEY,
-    person_id INT NOT NULL,
+    person_id INT NULL,
     branch_id INT NOT NULL,
     reservation_datetime DATETIME NOT NULL,
     party_size INT NOT NULL,
@@ -176,6 +177,7 @@ CREATE TABLE orders (
     subtotal DECIMAL(10,2) NOT NULL,
     tax_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     total_amount DECIMAL(10,2) NOT NULL,
+    notes VARCHAR(255) NULL,
     CONSTRAINT fk_orders_party
         FOREIGN KEY (party_id) REFERENCES party(party_id)
         ON DELETE RESTRICT
@@ -223,6 +225,7 @@ CREATE TABLE payment (
     payment_id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
     payment_type VARCHAR(15) NOT NULL,
+    card_last4 VARCHAR(4),
     amount DECIMAL(10,2) NOT NULL,
     tip_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     payment_datetime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -242,7 +245,7 @@ CREATE TABLE inventory_item (
     inventory_item_id INT AUTO_INCREMENT PRIMARY KEY,
     branch_id INT NOT NULL,
     item_name VARCHAR(50) NOT NULL,
-    quantity_on_hand INT NOT NULL,
+    quantity_on_hand DECIMAL(10,2) NOT NULL,
     unit_type VARCHAR(10) NOT NULL,
     reorder_level DECIMAL(10,2) NOT NULL,
     cost_per_unit DECIMAL(10,2) NOT NULL,
@@ -262,7 +265,9 @@ CREATE TABLE inventory_item (
     CONSTRAINT chk_inventory_reorder
         CHECK (reorder_level >= 0),
     CONSTRAINT chk_inventory_cost
-        CHECK (cost_per_unit >= 0)
+        CHECK (cost_per_unit >= 0),
+    CONSTRAINT uq_inventory_branch_item
+        UNIQUE (branch_id, item_name)
 );
 
 CREATE TABLE purchase_order (
@@ -331,7 +336,7 @@ CREATE TABLE shift_schedule (
 
 CREATE TABLE review (
     review_id INT AUTO_INCREMENT PRIMARY KEY,
-    person_id INT NOT NULL,
+    person_id INT NULL,
     branch_id INT NOT NULL,
     rating TINYINT NOT NULL,
     comments VARCHAR(250),
@@ -414,3 +419,34 @@ CREATE TABLE branch_hours (
     CONSTRAINT chk_day_of_week
         CHECK (day_of_week IN ('MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'))
 );
+
+-- Fixed Soul by the Sea branch locations used throughout the app.
+INSERT INTO branch (branch_id, branch_name, address, phone)
+VALUES
+    (1, 'Soul by the Sea - Hampton', '100 Ocean Avenue, Hampton, VA', '555-0100'),
+    (2, 'Soul by the Sea - Norfolk', '200 Harbor Street, Norfolk, VA', '555-0101'),
+    (3, 'Soul by the Sea - Chesapeake', '300 Bay Road, Chesapeake, VA', '555-0102');
+
+INSERT INTO branch_hours (branch_id, day_of_week, open_time, close_time)
+VALUES
+    (1, 'MONDAY', '11:00:00', '21:00:00'),
+    (1, 'TUESDAY', '11:00:00', '21:00:00'),
+    (1, 'WEDNESDAY', '11:00:00', '21:00:00'),
+    (1, 'THURSDAY', '11:00:00', '21:00:00'),
+    (1, 'FRIDAY', '11:00:00', '21:00:00'),
+    (1, 'SATURDAY', '11:00:00', '21:00:00'),
+    (1, 'SUNDAY', '11:00:00', '21:00:00'),
+    (2, 'MONDAY', '11:00:00', '21:00:00'),
+    (2, 'TUESDAY', '11:00:00', '21:00:00'),
+    (2, 'WEDNESDAY', '11:00:00', '21:00:00'),
+    (2, 'THURSDAY', '11:00:00', '21:00:00'),
+    (2, 'FRIDAY', '11:00:00', '21:00:00'),
+    (2, 'SATURDAY', '11:00:00', '21:00:00'),
+    (2, 'SUNDAY', '11:00:00', '21:00:00'),
+    (3, 'MONDAY', '11:00:00', '21:00:00'),
+    (3, 'TUESDAY', '11:00:00', '21:00:00'),
+    (3, 'WEDNESDAY', '11:00:00', '21:00:00'),
+    (3, 'THURSDAY', '11:00:00', '21:00:00'),
+    (3, 'FRIDAY', '11:00:00', '21:00:00'),
+    (3, 'SATURDAY', '11:00:00', '21:00:00'),
+    (3, 'SUNDAY', '11:00:00', '21:00:00');

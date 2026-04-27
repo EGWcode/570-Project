@@ -158,7 +158,7 @@ def get_customer_reservations(person_id):
         close_connection(conn, cursor)
 
 def make_reservation(person_id, branch_id, reservation_datetime, party_size):
-    """Creates a new reservation for a customer."""
+    """Creates a new confirmed reservation for a customer."""
     conn = get_connection()
     if not conn:
         return False, "Database connection failed."
@@ -168,7 +168,7 @@ def make_reservation(person_id, branch_id, reservation_datetime, party_size):
     try:
         cursor.execute("""
             INSERT INTO reservation (person_id, branch_id, reservation_datetime, party_size, status)
-            VALUES (%s, %s, %s, %s, 'PENDING')
+            VALUES (%s, %s, %s, %s, 'CONFIRMED')
         """, (person_id, branch_id, reservation_datetime, party_size))
 
         conn.commit()

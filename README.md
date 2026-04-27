@@ -231,10 +231,17 @@ Tkinter Desktop App (Role-Based UI)
 │   ├── reviews.py               # Review and feedback queries
 │   └── shifts.py                # Shift schedule queries
 │
+├── customer_web/
+│   ├── app.py               # Browser-based customer ordering website
+│   ├── templates/
+│   │   └── index.html
+│   └── static/
+│       ├── style.css
+│       └── script.js
+│
 └── frontend/
 ├── init.py
-├── login.py                 # Login screen, routes to correct interface by role
-├── customer_ui.py           # Customer interface windows and screens
+├── login.py                 # Login screen, routes staff roles and opens customer website
 ├── employee_ui.py           # Staff/employee interface windows and screens
 ├── manager_ui.py            # Manager interface windows and screens
 └── admin_ui.py              # Admin interface windows and screens

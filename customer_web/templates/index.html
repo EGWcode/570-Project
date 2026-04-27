@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FLOW | Soul by the Sea Customer Portal</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div>
+            <h1>Soul by the Sea</h1>
+            <p>Powered by FLOW Restaurant Management System</p>
+        </div>
+    </header>
+
+    <main class="page-shell">
+        <section class="content-area">
+            <section class="hero">
+                <h2>Order Online</h2>
+                <p>Browse the menu, place an order, make a reservation, or leave feedback.</p>
+                <div class="hero-actions">
+                    <button type="button" class="primary-btn" data-open-modal="reservation-modal">Make Reservation</button>
+                    <button type="button" class="secondary-btn" data-open-modal="review-modal">Leave Review</button>
+                </div>
+            </section>
+
+            <section id="menu" class="menu-layout">
+                <aside class="category-panel">
+                    <h3>Menu Categories</h3>
+                    <div id="category-buttons"></div>
+                </aside>
+
+                <section class="menu-panel">
+                    <h2 id="category-title">Appetizers</h2>
+                    <div id="menu-list" class="menu-list"></div>
+                </section>
+            </section>
+        </section>
+
+        <aside id="cart" class="cart-panel">
+            <h2>Your Order</h2>
+            <p>Items added from the menu will appear here.</p>
+            <div id="cart-list" class="cart-list"></div>
+            <div class="total-line">Total: <span id="cart-total">$0.00</span></div>
+            <label for="notes">Allergies / Notes</label>
+            <textarea id="notes" rows="4"></textarea>
+            <button type="button" id="place-order" class="primary-btn wide">Place Order</button>
+            <button type="button" id="clear-cart" class="dark-btn wide">Clear Cart</button>
+        </aside>
+    </main>
+
+    <div id="reservation-modal" class="modal" aria-hidden="true">
+        <div class="modal-card">
+            <button type="button" class="modal-close" data-close-modal>&times;</button>
+            <h2>Make a Reservation</h2>
+            <form id="reservation-form">
+                <label>Name<input name="name" type="text" required></label>
+                <label>Phone<input name="phone" type="tel" required></label>
+                <label>Branch
+                    <select name="branch_id" id="reservation-branch" required></select>
+                </label>
+                <label>Party Size
+                    <select name="party_size" required>
+                        <option value="1">1</option>
+                        <option value="2" selected>2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                        <option value="11">11</option>
+                        <option value="12">12</option>
+                        <option value="13">13</option>
+                        <option value="14">14</option>
+                        <option value="15">15</option>
+                        <option value="16">16</option>
+                        <option value="17">17</option>
+                        <option value="18">18</option>
+                        <option value="19">19</option>
+                        <option value="20">20</option>
+                    </select>
+                </label>
+                <label>Date
+                    <select name="date" id="reservation-date" required></select>
+                </label>
+                <label>Time
+                    <select name="time" id="reservation-time" required></select>
+                </label>
+                <button type="submit" class="primary-btn wide">Submit Reservation</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="payment-modal" class="modal" aria-hidden="true">
+        <div class="modal-card">
+            <button type="button" class="modal-close" data-close-modal>&times;</button>
+            <h2>Payment Information</h2>
+            <div id="payment-summary" class="payment-summary"></div>
+            <form id="payment-form">
+                <label>Cardholder Name<input name="cardholder" type="text" required></label>
+                <label>Card Number<input name="card_number" type="password" inputmode="numeric" required></label>
+                <label>Expiration Date<input name="expiration" type="text" placeholder="MM/YY" required></label>
+                <label>CVV<input name="cvv" type="password" inputmode="numeric" required></label>
+                <label>Payment Type
+                    <select name="payment_type" id="payment-type" required></select>
+                </label>
+                <label>Tip Amount<input name="tip_amount" type="number" min="0" step="0.01" value="0.00"></label>
+                <button type="submit" class="primary-btn wide">Submit Payment</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="review-modal" class="modal" aria-hidden="true">
+        <div class="modal-card">
+            <button type="button" class="modal-close" data-close-modal>&times;</button>
+            <h2>Leave a Review</h2>
+            <form id="review-form">
+                <label>Branch
+                    <select name="branch_id" id="review-branch" required></select>
+                </label>
+                <label>Rating
+                    <select name="rating" required>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5" selected>5</option>
+                    </select>
+                </label>
+                <label>Comments<textarea name="comments" rows="7" required></textarea></label>
+                <button type="submit" class="primary-btn wide">Submit Review</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script>
+        window.SOUL_DATA = {{ bootstrap_json | safe }};
+    </script>
+    <script src="/static/script.js"></script>
+</body>
+</html>
