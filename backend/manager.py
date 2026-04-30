@@ -159,6 +159,40 @@ def get_sales_report(branch_id, start_date, end_date):
     finally:
         close_connection(conn, cursor)
 
+def get_sales_by_hour(branch_id, report_date):
+    """
+    Returns order count and revenue grouped by hour of day for a given date.
+    Used for the 'sales by hour' analytics view.
+    """
+    conn = get_connection()
+    if not conn:
+        return []
+
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        cursor.execute("""
+            SELECT
+                HOUR(o.order_datetime)  AS hour_of_day,
+                COUNT(o.order_id)       AS total_orders,
+                SUM(o.total_amount)     AS total_revenue
+            FROM orders o
+            WHERE o.branch_id = %s
+              AND DATE(o.order_datetime) = %s
+              AND o.order_status = 'COMPLETED'
+            GROUP BY HOUR(o.order_datetime)
+            ORDER BY hour_of_day ASC
+        """, (branch_id, report_date))
+        return cursor.fetchall()
+
+    except Exception as e:
+        print(f"Error retrieving sales by hour: {e}")
+        return []
+
+    finally:
+        close_connection(conn, cursor)
+
+
 def get_top_menu_items(branch_id, limit=10):
     """
     Retrieves the best selling menu items for a branch
@@ -208,19 +242,20 @@ def get_food_cost_percentage(branch_id, start_date, end_date):
     try:
         cursor.execute("""
             SELECT
-                SUM(o.total_amount) as total_revenue,
-                SUM(poi.quantity_ordered * poi.unit_cost) as total_inventory_cost,
+                SUM(o.total_amount) AS total_revenue,
+                SUM(oi.quantity * COALESCE(mii.quantity_required, 0) * COALESCE(ii.cost_per_unit, 0)) AS total_inventory_cost,
                 ROUND(
-                    (SUM(poi.quantity_ordered * poi.unit_cost) /
-                     NULLIF(SUM(o.total_amount), 0)) * 100, 2
-                ) as food_cost_percentage
+                    SUM(oi.quantity * COALESCE(mii.quantity_required, 0) * COALESCE(ii.cost_per_unit, 0)) /
+                    NULLIF(SUM(o.total_amount), 0) * 100, 2
+                ) AS food_cost_percentage
             FROM orders o
-            LEFT JOIN purchase_order po ON o.branch_id = po.branch_id
-            LEFT JOIN purchase_order_item poi ON po.purchase_order_id = poi.purchase_order_id
+            JOIN order_item oi ON o.order_id = oi.order_id
+            LEFT JOIN menu_item_ingredient mii ON oi.menu_item_id = mii.menu_item_id
+            LEFT JOIN inventory_item ii ON mii.inventory_item_id = ii.inventory_item_id
+                AND ii.branch_id = o.branch_id
             WHERE o.branch_id = %s
             AND DATE(o.order_datetime) BETWEEN %s AND %s
             AND o.order_status = 'COMPLETED'
-            AND po.status = 'RECEIVED'
         """, (branch_id, start_date, end_date))
         return cursor.fetchone()
 
@@ -298,58 +333,6 @@ def get_cross_branch_summary():
     except Exception as e:
         print(f"Error retrieving cross branch summary: {e}")
         return []
-
-    finally:
-        close_connection(conn, cursor)
-
-def add_branch(branch_name, address=None, phone=None):
-    """Adds a new branch to the system."""
-    conn = get_connection()
-    if not conn:
-        return False, "Database connection failed."
-
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute("""
-            INSERT INTO branch (branch_name, address, phone)
-            VALUES (%s, %s, %s)
-        """, (branch_name, address, phone))
-
-        conn.commit()
-        return True, "Branch added successfully."
-
-    except Exception as e:
-        conn.rollback()
-        return False, f"Failed to add branch: {e}"
-
-    finally:
-        close_connection(conn, cursor)
-
-def update_branch_manager(branch_id, manager_id):
-    """Assigns a manager to a branch."""
-    conn = get_connection()
-    if not conn:
-        return False, "Database connection failed."
-
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute("""
-            UPDATE branch
-            SET manager_id = %s
-            WHERE branch_id = %s
-        """, (manager_id, branch_id))
-
-        if cursor.rowcount == 0:
-            return False, "Branch not found."
-
-        conn.commit()
-        return True, "Branch manager updated successfully."
-
-    except Exception as e:
-        conn.rollback()
-        return False, f"Failed to update branch manager: {e}"
 
     finally:
         close_connection(conn, cursor)
@@ -549,10 +532,11 @@ def get_supplier_inventory_items(supplier_id):
     finally:
         close_connection(conn, cursor)
 
-def get_purchase_order_summary(branch_id):
+def get_payroll_summary(branch_id):
     """
-    Retrieves a summary of all purchase orders for a branch
-    including supplier details, status, and total costs.
+    Returns payroll records for a branch joined with employee names.
+    Falls back to calculating estimated payroll from shift_schedule if
+    the payroll table has no rows yet.
     """
     conn = get_connection()
     if not conn:
@@ -562,24 +546,41 @@ def get_purchase_order_summary(branch_id):
 
     try:
         cursor.execute("""
-            SELECT
-                po.purchase_order_id, po.order_date, po.delivery_date,
-                po.status, po.total_cost,
-                s.supplier_name, s.contact_name, s.phone, s.email,
-                COUNT(poi.purchase_order_item_id) as total_items
-            FROM purchase_order po
-            JOIN supplier s ON po.supplier_id = s.supplier_id
-            LEFT JOIN purchase_order_item poi ON po.purchase_order_id = poi.purchase_order_id
-            WHERE po.branch_id = %s
-            GROUP BY po.purchase_order_id, po.order_date, po.delivery_date,
-                     po.status, po.total_cost, s.supplier_name,
-                     s.contact_name, s.phone, s.email
-            ORDER BY po.order_date DESC
+            SELECT p.payroll_id,
+                   CONCAT(pe.first_name, ' ', pe.last_name) AS employee_name,
+                   p.pay_period_start, p.pay_period_end,
+                   p.hours_worked, p.gross_pay, p.deductions,
+                   p.net_pay, p.pay_date, p.status
+            FROM payroll p
+            JOIN person pe ON p.person_id = pe.person_id
+            WHERE p.branch_id = %s
+            ORDER BY p.pay_period_start DESC
+            LIMIT 50
         """, (branch_id,))
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+
+        if not rows:
+            # Estimated payroll from shifts — used until payroll runs are processed
+            cursor.execute("""
+                SELECT CONCAT(pe.first_name, ' ', pe.last_name) AS employee_name,
+                       SUM(TIMESTAMPDIFF(HOUR, s.start_time, s.end_time)) AS hours_worked,
+                       SUM(TIMESTAMPDIFF(HOUR, s.start_time, s.end_time) * COALESCE(st.hourly_rate, 0)) AS gross_pay,
+                       MIN(s.shift_date) AS pay_period_start,
+                       MAX(s.shift_date) AS pay_period_end,
+                       'ESTIMATED' AS status
+                FROM shift_schedule s
+                JOIN person pe ON s.person_id = pe.person_id
+                LEFT JOIN staff st ON s.person_id = st.person_id
+                WHERE s.branch_id = %s
+                GROUP BY s.person_id, pe.first_name, pe.last_name
+                ORDER BY gross_pay DESC
+            """, (branch_id,))
+            rows = cursor.fetchall()
+
+        return rows
 
     except Exception as e:
-        print(f"Error retrieving purchase order summary: {e}")
+        print(f"Error retrieving payroll summary: {e}")
         return []
 
     finally:

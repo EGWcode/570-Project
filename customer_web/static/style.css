@@ -73,10 +73,10 @@ button {
 .site-header a,
 .site-header button,
 .primary-btn {
-    background: var(--accent);
-    color: var(--page);
-    border: 0;
-    border-radius: 0;
+    background: var(--panel-dark);
+    color: var(--accent);
+    border: 2px solid var(--accent);
+    border-radius: 3px;
     padding: 9px 14px;
     text-decoration: none;
     font-weight: 700;
@@ -85,27 +85,36 @@ button {
 .site-header a:hover,
 .site-header button:hover,
 .primary-btn:hover {
-    background: var(--accent-deep);
+    background: #092c2a;
+    color: #ffffff;
 }
 
 .primary-btn:disabled {
-    background: #31424d;
-    color: #9ab5c0;
+    background: #241114;
+    color: #ff9a9a;
+    border-color: #ff6b6b;
     cursor: not-allowed;
 }
 
 .secondary-btn {
-    background: #ffffff;
-    color: var(--page);
-    border: 0;
-    padding: 8px 12px;
+    background: var(--panel-dark);
+    color: var(--accent);
+    border: 2px solid var(--accent);
+    border-radius: 3px;
+    padding: 7px 12px;
     font-weight: 700;
 }
 
+.secondary-btn:hover {
+    background: var(--accent);
+    color: var(--page);
+}
+
 .dark-btn {
-    background: #1a3a4a;
+    background: var(--panel-dark);
     color: #ffffff;
-    border: 0;
+    border: 2px solid #244456;
+    border-radius: 3px;
     padding: 8px 12px;
     font-weight: 700;
 }
@@ -169,9 +178,10 @@ button {
     display: block;
     width: 100%;
     text-align: left;
-    background: #ffffff;
-    color: #000000;
-    border: 0;
+    background: var(--panel-dark);
+    color: #ffffff;
+    border: 1px solid #244456;
+    border-left: 3px solid #244456;
     padding: 9px 14px;
     margin: 2px 0;
     font-weight: 700;
@@ -179,8 +189,9 @@ button {
 
 .category-btn.active,
 .category-btn:hover {
-    background: #000000;
+    background: #092c2a;
     color: #ffffff;
+    border-color: var(--accent);
 }
 
 .menu-panel h2 {
@@ -201,7 +212,8 @@ button {
 }
 
 .menu-card.sold-out {
-    opacity: 0.58;
+    border-color: #ff6b6b;
+    background: #180f16;
 }
 
 .menu-card-top,
@@ -241,6 +253,26 @@ button {
     font-size: 10px;
     line-height: 1.4;
     margin: 8px 0;
+}
+
+.sold-out-badge {
+    display: inline-block;
+    margin-left: 6px;
+    background: #ff6b6b;
+    color: #16080a;
+    border: 1px solid #ff9a9a;
+    padding: 2px 6px;
+    font-family: Arial, sans-serif;
+    font-size: 9px;
+    font-weight: 800;
+    vertical-align: middle;
+}
+
+.sold-out-note {
+    color: #ffb4b4;
+    border-left: 3px solid #ff6b6b;
+    background: #241114;
+    padding: 7px 9px;
 }
 
 .tag {
@@ -289,8 +321,24 @@ button {
     padding: 8px 0;
 }
 
+.cart-row span {
+    min-width: 0;
+}
+
+.cart-row strong,
+.cart-row small {
+    display: block;
+}
+
+.cart-row small {
+    color: var(--muted);
+    font-size: 9px;
+    line-height: 1.35;
+    margin-top: 3px;
+}
+
 .cart-row button {
-    background: transparent;
+    background: var(--panel-dark);
     border: 1px solid #244456;
     color: var(--muted);
 }
@@ -314,8 +362,8 @@ select,
 textarea {
     width: 100%;
     border: 1px solid #244456;
-    background: #ffffff;
-    color: #111111;
+    background: var(--panel);
+    color: #ffffff;
     padding: 9px;
 }
 
@@ -374,6 +422,19 @@ textarea {
     color: var(--accent);
     font-weight: 700;
     margin-bottom: 12px;
+}
+
+.option-description {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: -4px 0 12px;
+}
+
+.branch-notice {
+    color: var(--muted);
+    font-size: 10px;
+    margin: 0 0 10px;
 }
 
 .toast {

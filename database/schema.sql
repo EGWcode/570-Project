@@ -334,6 +334,32 @@ CREATE TABLE shift_schedule (
         CHECK (end_time > start_time)
 );
 
+-- payroll
+-- Stores processed payroll runs per employee per pay period.
+-- Calculated from shift_schedule hours * staff.hourly_rate (or manager.salary / 26).
+CREATE TABLE payroll (
+    payroll_id      INT AUTO_INCREMENT PRIMARY KEY,
+    person_id       INT NOT NULL,
+    branch_id       INT NOT NULL,
+    pay_period_start DATE NOT NULL,
+    pay_period_end   DATE NOT NULL,
+    hours_worked    DECIMAL(6,2) NOT NULL DEFAULT 0.00,
+    gross_pay       DECIMAL(10,2) NOT NULL,
+    deductions      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    net_pay         DECIMAL(10,2) NOT NULL,
+    pay_date        DATE NOT NULL,
+    status          ENUM('PENDING','PROCESSED','PAID') NOT NULL DEFAULT 'PENDING',
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_payroll_employee
+        FOREIGN KEY (person_id) REFERENCES employee(person_id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_payroll_branch
+        FOREIGN KEY (branch_id) REFERENCES branch(branch_id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_payroll_pay CHECK (gross_pay >= 0 AND net_pay >= 0),
+    CONSTRAINT chk_payroll_period CHECK (pay_period_end >= pay_period_start)
+);
+
 CREATE TABLE review (
     review_id INT AUTO_INCREMENT PRIMARY KEY,
     person_id INT NULL,

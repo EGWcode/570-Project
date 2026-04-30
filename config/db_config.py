@@ -43,6 +43,13 @@ def get_connection():
 
 def close_connection(connection, cursor=None):
     if cursor:
-        cursor.close()
+        try:
+            cursor.fetchall()  # drain any unread results so the connection stays clean
+        except Exception:
+            pass
+        try:
+            cursor.close()
+        except Exception:
+            pass
     if connection and connection.is_connected():
         connection.close()

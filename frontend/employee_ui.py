@@ -27,6 +27,46 @@ import tkinter as tk
 from tkinter import ttk, messagebox, font as tkfont, simpledialog
 from datetime import date
 
+# ── macOS: native tk.Button ignores bg/fg; replace with Frame+Label ───────────
+import platform as _platform
+if _platform.system() == "Darwin":
+    _TkFrame, _TkLabel = tk.Frame, tk.Label
+    class _ColorButton(_TkFrame):
+        def __init__(self, parent, text="", command=None,
+                     bg="#1C2128", fg="#E6EDF3",
+                     font=("Segoe UI", 10, "bold"),
+                     padx=8, pady=5, cursor="hand2",
+                     width=None, **_ignored):
+            super().__init__(parent, bg=bg, cursor=cursor)
+            kw = dict(text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady, cursor=cursor)
+            if width is not None:
+                kw["width"] = width
+            self._lbl = _TkLabel(self, **kw)
+            self._lbl.pack(fill="both", expand=True)
+            if command:
+                self._attach_cmd(command)
+        def _attach_cmd(self, cmd):
+            self._lbl.unbind("<Button-1>")
+            self.unbind("<Button-1>")
+            self._lbl.bind("<Button-1>", lambda e: cmd())
+            self.bind("<Button-1>", lambda e: cmd())
+        def config(self, bg=None, fg=None, text=None,
+                   cursor=None, command=None, **_ignored):
+            if bg is not None:
+                _TkFrame.config(self, bg=bg); self._lbl.config(bg=bg)
+            if fg is not None:
+                self._lbl.config(fg=fg)
+            if text is not None:
+                self._lbl.config(text=text)
+            if cursor is not None:
+                _TkFrame.config(self, cursor=cursor); self._lbl.config(cursor=cursor)
+            if command is not None:
+                self._attach_cmd(command)
+        configure = config
+    tk.Button = _ColorButton
+del _platform
+# ──────────────────────────────────────────────────────────────────────────────
+
 try:
     from backend.orders import get_active_orders, get_order_items, update_order_status
     from backend.inventory import check_order_inventory, decrement_order_inventory
@@ -121,7 +161,7 @@ def load_todays_reservations():
             FROM reservation r
             LEFT JOIN person p ON r.person_id = p.person_id
             WHERE DATE(r.reservation_datetime) = CURDATE()
-              AND r.status IN ('CONFIRMED', 'PENDING', 'SEATED')
+              AND r.status IN ('CONFIRMED', 'PENDING')
             ORDER BY r.reservation_datetime
         """)
         return cursor.fetchall()
@@ -222,6 +262,25 @@ def load_menu_from_db():
     except Exception as exc:
         print(f"Error loading menu from MySQL: {exc}")
         return []
+    finally:
+        close_connection(conn, cursor)
+
+
+def update_reservation_status_db(reservation_id, status):
+    if not MYSQL_ORDERS_AVAILABLE:
+        return False
+    conn = get_connection()
+    if not conn:
+        return False
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE reservation SET status = %s WHERE reservation_id = %s", (status, reservation_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as exc:
+        conn.rollback()
+        print(f"Error updating reservation: {exc}")
+        return False
     finally:
         close_connection(conn, cursor)
 
@@ -371,6 +430,20 @@ STATUS_LABELS = {
     "dirty":     "Needs Clean",
 }
 
+BTN_DARK = "#111820"
+BTN_BORDER = "#3B4A57"
+BTN_ACTIVE = "#0F2419"
+BTN_ACTIVE_BORDER = "#3FB950"
+BTN_WARN = "#2A1F00"
+BTN_WARN_BORDER = "#D4A843"
+
+DEMO_STAFF = [
+    {"name": "Maya Johnson", "role": "Server", "shift": "10:00 AM - 4:00 PM", "station": "Main Floor"},
+    {"name": "Andre Williams", "role": "Line Cook", "shift": "10:00 AM - 4:00 PM", "station": "Kitchen"},
+    {"name": "Tiana Brooks", "role": "Host", "shift": "11:00 AM - 5:00 PM", "station": "Front Door"},
+    {"name": "Malik Carter", "role": "Bartender", "shift": "12:00 PM - 6:00 PM", "station": "Bar"},
+]
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
@@ -401,14 +474,30 @@ class FLOWApp(tk.Tk):
 
         # Demo employee context. Orders are loaded from MySQL across branches so
         # website orders appear during the classroom demo.
-        self.employee_name   = "Employee POS"
+        self.employee_name   = DEMO_STAFF[0]["name"]
         self.branch_id       = 1
         self.employee_id     = get_or_create_pos_employee(self.branch_id)
         self.branch_name     = load_branch_name(self.branch_id)
+        self._order_detail_window = None
 
+        self._setup_style()
         self._build_ui()
         self._load_data()
         self._schedule_auto_refresh()
+
+    def _setup_style(self):
+        s = ttk.Style(self)
+        s.theme_use("clam")
+        s.configure("TCombobox",
+                    fieldbackground="#0D1117", background="#161B22",
+                    foreground="#E6EDF3", selectforeground="#E6EDF3",
+                    selectbackground="#1F2530", bordercolor="#30363D",
+                    arrowcolor="#D4A843", insertcolor="#E6EDF3")
+        s.map("TCombobox",
+              fieldbackground=[("readonly", "#0D1117")],
+              foreground=[("readonly", "#E6EDF3")],
+              background=[("readonly", "#161B22"), ("active", "#1F2530")],
+              arrowcolor=[("readonly", "#D4A843"), ("active", "#D4A843")])
 
     # ── Load data from databases ───────────────────────────────────────────
     def _load_data(self):
@@ -432,19 +521,42 @@ class FLOWApp(tk.Tk):
         if not MYSQL_ORDERS_AVAILABLE:
             return []
         try:
+            # Load all active SQL orders for the demo so online orders cannot be
+            # hidden by a branch-id mismatch in an older local database.
             return get_active_orders()
         except Exception as exc:
             print(f"Error loading active MySQL orders: {exc}")
             return []
 
     def _refresh_web_orders(self):
+        self.reservations = load_todays_reservations()
         self.web_orders = self._load_web_orders()
         self._refresh_sidebar()
+
+    @staticmethod
+    def _classify_order(order):
+        """Returns (kind, label) where kind is 'online' or 'table'."""
+        notes      = order.get("notes") or ""
+        table_num  = order.get("table_number")
+        if notes.startswith("Employee POS table "):
+            return "table", notes.replace("Employee POS table ", "", 1)
+        try:
+            if table_num is not None and int(table_num) > 0:
+                return "table", f"Table {table_num}"
+        except (TypeError, ValueError):
+            pass
+        return "online", "Online Order"
 
     def _schedule_auto_refresh(self):
         self.after(5000, self._auto_refresh_web_orders)
 
     def _auto_refresh_web_orders(self):
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        self.reservations = load_todays_reservations()
         self.web_orders = self._load_web_orders()
         self._refresh_sidebar()
         self._schedule_auto_refresh()
@@ -471,16 +583,49 @@ class FLOWApp(tk.Tk):
         body.pack(fill="both", expand=True)
 
         # ── SIDEBAR ───────────────────────────────────────────────────────
-        self.sidebar = tk.Frame(body, bg="#161B22", width=200)
+        self.sidebar = tk.Frame(body, bg="#161B22", width=240)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
 
+        # Bottom buttons — pinned so they never get pushed off screen
+        btn_bar = tk.Frame(self.sidebar, bg="#161B22")
+        btn_bar.pack(side="bottom", fill="x")
+        ttk.Separator(btn_bar, orient="horizontal").pack(fill="x")
+        tk.Button(btn_bar, text="Kitchen Board", bg="#1A1030", fg="#A371F7",
+                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
+                  padx=10, pady=8, cursor="hand2",
+                  command=self._open_kitchen_board).pack(fill="x", padx=12, pady=(4, 2))
+        tk.Button(btn_bar, text="Manager Access", bg="#0F2419", fg="#3FB950",
+                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
+                  padx=10, pady=8, cursor="hand2",
+                  command=self._open_manager_access).pack(fill="x", padx=12, pady=(0, 8))
+
+        # Scrollable content area
+        sb_canvas = tk.Canvas(self.sidebar, bg="#161B22", highlightthickness=0)
+        sb_scrollbar = ttk.Scrollbar(self.sidebar, orient="vertical", command=sb_canvas.yview)
+        sb_canvas.configure(yscrollcommand=sb_scrollbar.set)
+        sb_scrollbar.pack(side="right", fill="y")
+        sb_canvas.pack(side="left", fill="both", expand=True)
+        scroll_inner = tk.Frame(sb_canvas, bg="#161B22")
+        _sb_win = sb_canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
+        def _on_sb_configure(e):
+            sb_canvas.configure(scrollregion=sb_canvas.bbox("all"))
+            sb_canvas.itemconfig(_sb_win, width=sb_canvas.winfo_width())
+        scroll_inner.bind("<Configure>", _on_sb_configure)
+        sb_canvas.bind("<Configure>", lambda e: sb_canvas.itemconfig(_sb_win, width=e.width))
+        def _on_mousewheel(e):
+            sb_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        sb_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Use scroll_inner as the parent for all sidebar content
+        sidebar = scroll_inner
+
         # Status legend
-        tk.Label(self.sidebar, text="TABLE STATUS · MongoDB",
+        tk.Label(sidebar, text="TABLE STATUS",
                  bg="#161B22", fg="#444D56", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=12, pady=(12,4))
         self.count_labels = {}
         for key, label in STATUS_LABELS.items():
-            row = tk.Frame(self.sidebar, bg="#161B22")
+            row = tk.Frame(sidebar, bg="#161B22")
             row.pack(fill="x", padx=10, pady=1)
             dot_color = STATUS_COLORS[key][1]
             tk.Canvas(row, width=10, height=10, bg="#161B22", highlightthickness=0).pack(side="left", padx=(2,6))
@@ -492,32 +637,34 @@ class FLOWApp(tk.Tk):
             cnt.pack(side="right", padx=4)
             self.count_labels[key] = cnt
 
-        ttk.Separator(self.sidebar, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Separator(sidebar, orient="horizontal").pack(fill="x", pady=8)
+
+        # Staff schedule
+        tk.Label(sidebar, text="TODAY'S SHIFT",
+                 bg="#161B22", fg="#444D56", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=12, pady=(0,4))
+        self.schedule_frame = tk.Frame(sidebar, bg="#161B22")
+        self.schedule_frame.pack(fill="x", padx=8)
+
+        ttk.Separator(sidebar, orient="horizontal").pack(fill="x", pady=8)
 
         # Reservations
-        tk.Label(self.sidebar, text="TODAY'S RESERVATIONS · SQL",
+        tk.Label(sidebar, text="TODAY'S RESERVATIONS",
                  bg="#161B22", fg="#444D56", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=12, pady=(0,4))
-        self.res_frame = tk.Frame(self.sidebar, bg="#161B22")
+        self.res_frame = tk.Frame(sidebar, bg="#161B22")
         self.res_frame.pack(fill="x", padx=8)
 
-        ttk.Separator(self.sidebar, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Separator(sidebar, orient="horizontal").pack(fill="x", pady=8)
 
         # Active orders
-        orders_head = tk.Frame(self.sidebar, bg="#161B22")
+        orders_head = tk.Frame(sidebar, bg="#161B22")
         orders_head.pack(fill="x", padx=12, pady=(0,4))
-        tk.Label(orders_head, text="ACTIVE ORDERS · SQL",
+        tk.Label(orders_head, text="ACTIVE ORDERS",
                  bg="#161B22", fg="#444D56", font=("Segoe UI", 8, "bold")).pack(side="left")
         tk.Button(orders_head, text="Refresh", bg="#1C2128", fg="#8B949E",
                   font=("Segoe UI", 8, "bold"), relief="flat", bd=0, cursor="hand2",
                   command=self._refresh_web_orders).pack(side="right")
-        self.orders_frame = tk.Frame(self.sidebar, bg="#161B22")
-        self.orders_frame.pack(fill="both", expand=True, padx=8)
-
-        ttk.Separator(self.sidebar, orient="horizontal").pack(fill="x", pady=8)
-        tk.Button(self.sidebar, text="Manager Access", bg="#0F2419", fg="#3FB950",
-                  font=("Segoe UI", 10, "bold"), relief="flat", bd=0,
-                  padx=10, pady=8, cursor="hand2",
-                  command=self._open_manager_access).pack(fill="x", padx=12, pady=(0, 10))
+        self.orders_frame = tk.Frame(sidebar, bg="#161B22")
+        self.orders_frame.pack(fill="x", padx=8, pady=(0, 8))
 
         # ── FLOOR CANVAS ──────────────────────────────────────────────────
         canvas_frame = tk.Frame(body, bg="#0D1117")
@@ -541,6 +688,22 @@ class FLOWApp(tk.Tk):
         self.panel.pack_propagate(False)
 
         self._build_order_panel()
+
+    def _render_schedule(self):
+        for w in self.schedule_frame.winfo_children():
+            w.destroy()
+        for staff in DEMO_STAFF:
+            active = staff["name"] == self.employee_name
+            bg = "#0F2419" if active else "#1C2128"
+            fg = "#3FB950" if active else "#E6EDF3"
+            row = tk.Frame(self.schedule_frame, bg=bg, pady=4, padx=8)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=staff["name"], bg=bg, fg=fg,
+                     font=("Segoe UI", 9, "bold")).pack(anchor="w")
+            tk.Label(row, text=f"{staff['role']} · {staff['shift']}", bg=bg, fg="#8B949E",
+                     font=("Segoe UI", 8), wraplength=200, justify="left").pack(anchor="w")
+            tk.Label(row, text=staff["station"], bg=bg, fg="#D4A843",
+                     font=("Segoe UI", 8)).pack(anchor="w")
 
     def _build_order_panel(self):
         for w in self.panel.winfo_children():
@@ -586,7 +749,10 @@ class FLOWApp(tk.Tk):
             btn = tk.Button(sf, text=label,
                             bg=c[0] if active else "#1C2128",
                             fg=c[2], font=("Segoe UI", 8, "bold"),
-                            relief="flat", bd=0, padx=6, pady=3,
+                            relief="solid", bd=1, padx=6, pady=3,
+                            highlightthickness=1,
+                            highlightbackground=c[1] if active else BTN_BORDER,
+                            highlightcolor=c[1],
                             cursor="hand2",
                             command=lambda k=key: self._set_status(k))
             btn.pack(side="left", padx=2)
@@ -597,16 +763,23 @@ class FLOWApp(tk.Tk):
         default_tab = getattr(self, "pending_panel_tab", "add")
         self.pending_panel_tab = "add"
         self.panel_tab = tk.StringVar(value=default_tab)
+        self.panel_tab_buttons = {}
         tab_bar = tk.Frame(self.panel, bg="#1C2128")
         tab_bar.pack(fill="x")
         for tab_id, tab_name in [("add","Add Items"),("order","Order"),("payment","Payment")]:
-            tk.Radiobutton(tab_bar, text=tab_name, variable=self.panel_tab,
-                           value=tab_id, bg="#1C2128", fg="#E6EDF3",
-                           selectcolor="#0D1117", activebackground="#1C2128",
-                           font=("Segoe UI", 10, "bold"),
-                           indicatoron=False, relief="flat", padx=8, pady=6,
-                           cursor="hand2",
-                           command=self._switch_panel_tab).pack(side="left", expand=True, fill="x")
+            active = (tab_id == default_tab)
+            btn = tk.Button(tab_bar, text=tab_name,
+                            bg="#0D1117" if active else "#1C2128",
+                            fg="#D4A843" if active else "#8B949E",
+                            activebackground="#0D1117", activeforeground="#D4A843",
+                            font=("Segoe UI", 10, "bold"), relief="solid", bd=1,
+                            highlightthickness=1,
+                            highlightbackground="#D4A843" if active else BTN_BORDER,
+                            highlightcolor="#D4A843",
+                            padx=8, pady=6, cursor="hand2",
+                            command=lambda t=tab_id: self._select_panel_tab(t))
+            btn.pack(side="left", expand=True, fill="x")
+            self.panel_tab_buttons[tab_id] = btn
 
         # Tab content area
         self.tab_content = tk.Frame(self.panel, bg="#161B22")
@@ -628,10 +801,18 @@ class FLOWApp(tk.Tk):
         self.send_btn.pack(side="left", fill="x", expand=True)
         self._update_send_btn()
 
+    def _select_panel_tab(self, tab_id):
+        self.panel_tab.set(tab_id)
+        self._switch_panel_tab()
+
     def _switch_panel_tab(self):
         for w in self.tab_content.winfo_children():
             w.destroy()
         tab = self.panel_tab.get()
+        for tid, btn in getattr(self, "panel_tab_buttons", {}).items():
+            btn.config(bg="#0D1117" if tid == tab else "#1C2128",
+                       fg="#D4A843" if tid == tab else "#8B949E",
+                       highlightbackground="#D4A843" if tid == tab else BTN_BORDER)
         if tab == "add":    self._build_add_tab()
         elif tab == "order": self._build_order_tab()
         elif tab == "payment": self._build_payment_tab()
@@ -639,8 +820,8 @@ class FLOWApp(tk.Tk):
     def _build_add_tab(self):
         f = self.tab_content
 
-        # Category filter
-        cats = ["All", "Appetizers", "Above Sea", "Sea Level", "Under the Sea", "Sides", "Drinks", "Desserts"]
+        # Category filter — built dynamically from loaded menu items
+        cats = ["All"] + sorted({m["category"] for m in self.menu_items if m.get("category")})
         cat_bar = tk.Frame(f, bg="#161B22")
         cat_bar.pack(fill="x", padx=6, pady=6)
         tk.Label(cat_bar, text="Category", bg="#161B22", fg="#8B949E",
@@ -767,7 +948,7 @@ class FLOWApp(tk.Tk):
         scr.pack(fill="both", expand=True, padx=10, pady=8)
 
         # Subtotal display
-        tk.Label(scr, text="PAYMENT · SQL Payment Table", bg="#161B22", fg="#444D56",
+        tk.Label(scr, text="PAYMENT", bg="#161B22", fg="#444D56",
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0,6))
         row = tk.Frame(scr, bg="#1C2128", pady=6, padx=10)
         row.pack(fill="x", pady=2)
@@ -784,52 +965,122 @@ class FLOWApp(tk.Tk):
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(10,4))
         methods_f = tk.Frame(scr, bg="#161B22")
         methods_f.pack(fill="x")
-        for m in ["Cash","Credit Card","Debit Card","Gift Card","Mobile Pay"]:
-            tk.Radiobutton(methods_f, text=m, variable=self.pay_method, value=m,
-                           bg="#1C2128", fg="#E6EDF3", selectcolor="#D4A843",
-                           activebackground="#1C2128", font=("Segoe UI",10),
-                           indicatoron=False, relief="flat", padx=8, pady=6,
-                           cursor="hand2",
-                           command=lambda: self._build_payment_tab_refresh()).pack(side="left", padx=2, pady=2)
+        self.pay_method_buttons = {}
+        for col in range(2):
+            methods_f.columnconfigure(col, weight=1, uniform="payment_methods")
+        for idx, m in enumerate(["Cash","Credit Card","Debit Card","Gift Card","Mobile Pay"]):
+            selected = (self.pay_method.get() == m)
+            def _pick_method(method=m):
+                self.pay_method.set(method)
+                self._refresh_payment_controls()
+            btn = tk.Button(methods_f, text=m,
+                            bg=BTN_ACTIVE if selected else BTN_DARK,
+                            fg="#7EE89A" if selected else "#E6EDF3",
+                            activebackground=BTN_ACTIVE, activeforeground="#7EE89A",
+                            font=("Segoe UI", 9, "bold"), relief="solid", bd=1,
+                            highlightthickness=1,
+                            highlightbackground=BTN_ACTIVE_BORDER if selected else BTN_BORDER,
+                            highlightcolor=BTN_ACTIVE_BORDER,
+                            padx=4, pady=7, cursor="hand2",
+                            command=_pick_method)
+            btn.grid(row=idx // 2, column=idx % 2, sticky="ew", padx=2, pady=2)
+            self.pay_method_buttons[m] = btn
 
         # Tip
         tk.Label(scr, text="Tip", bg="#161B22", fg="#8B949E",
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(10,4))
         tip_f = tk.Frame(scr, bg="#161B22")
         tip_f.pack(fill="x")
-        for p in [0,15,18,20,25]:
+        self.tip_buttons = {}
+        for col in range(3):
+            tip_f.columnconfigure(col, weight=1, uniform="tips")
+        for idx, p in enumerate([0,15,18,20,25,50]):
             lbl = "No Tip" if p == 0 else f"{p}%"
-            tk.Radiobutton(tip_f, text=lbl, variable=self.tip_pct, value=p,
-                           bg="#1C2128", fg="#E6EDF3", selectcolor="#3FB950",
-                           activebackground="#1C2128", font=("Segoe UI",10),
-                           indicatoron=False, relief="flat", padx=6, pady=5,
-                           cursor="hand2",
-                           command=lambda: self._build_payment_tab_refresh()).pack(side="left", padx=2)
+            selected = (self.tip_pct.get() == p)
+            def _pick_tip(pct=p):
+                self.tip_pct.set(pct)
+                self._refresh_payment_controls()
+            btn = tk.Button(tip_f, text=lbl,
+                            bg=BTN_ACTIVE if selected else BTN_DARK,
+                            fg="#7EE89A" if selected else "#E6EDF3",
+                            activebackground=BTN_ACTIVE, activeforeground="#7EE89A",
+                            font=("Segoe UI", 9, "bold"), relief="solid", bd=1,
+                            highlightthickness=1,
+                            highlightbackground=BTN_ACTIVE_BORDER if selected else BTN_BORDER,
+                            highlightcolor=BTN_ACTIVE_BORDER,
+                            padx=4, pady=6, cursor="hand2",
+                            command=_pick_tip)
+            btn.grid(row=idx // 3, column=idx % 3, sticky="ew", padx=2, pady=2)
+            self.tip_buttons[p] = btn
 
         # Total
         tot_row = tk.Frame(scr, bg="#1C2128", pady=8, padx=10)
         tot_row.pack(fill="x", pady=(10,6))
-        tk.Label(tot_row, text=f"Tip ({tip_pct}%)", bg="#1C2128", fg="#8B949E", font=("Segoe UI",10)).pack(side="left")
-        tk.Label(tot_row, text=f"${tip_amt:.2f}", bg="#1C2128", fg="#E6EDF3", font=("Segoe UI",10)).pack(side="right")
+        self.tip_label = tk.Label(tot_row, text=f"Tip ({tip_pct}%)", bg="#1C2128", fg="#8B949E", font=("Segoe UI",10))
+        self.tip_label.pack(side="left")
+        self.tip_amount_label = tk.Label(tot_row, text=f"${tip_amt:.2f}", bg="#1C2128", fg="#E6EDF3", font=("Segoe UI",10))
+        self.tip_amount_label.pack(side="right")
 
         grand_row = tk.Frame(scr, bg="#1C2128", pady=8, padx=10)
         grand_row.pack(fill="x", pady=2)
         tk.Label(grand_row, text="Total Due", bg="#1C2128", fg="#E6EDF3", font=("Segoe UI",13,"bold")).pack(side="left")
-        tk.Label(grand_row, text=f"${grand:.2f}", bg="#1C2128", fg="#D4A843", font=("Segoe UI",15,"bold")).pack(side="right")
+        self.grand_label = tk.Label(grand_row, text=f"${grand:.2f}", bg="#1C2128", fg="#D4A843", font=("Segoe UI",15,"bold"))
+        self.grand_label.pack(side="right")
 
         pay_lbl = f"Confirm {self.pay_method.get()} — ${grand:.2f}" if self.pay_method.get() else "Select payment method"
-        bg_c = "#0F2419" if self.pay_method.get() else "#1C2128"
-        fg_c = "#3FB950" if self.pay_method.get() else "#444D56"
-        tk.Button(scr, text=pay_lbl, bg=bg_c, fg=fg_c,
-                  font=("Segoe UI", 11, "bold"), relief="flat", bd=0,
-                  pady=10, cursor="hand2" if self.pay_method.get() else "arrow",
-                  command=lambda g=grand, t=tip_amt: self._confirm_payment(g, t) if self.pay_method.get() else None
-                  ).pack(fill="x", pady=(8,0))
+        bg_c = BTN_ACTIVE if self.pay_method.get() else BTN_DARK
+        fg_c = "#7EE89A" if self.pay_method.get() else "#8B949E"
+        self.confirm_pay_btn = tk.Button(scr, text=pay_lbl, bg=bg_c, fg=fg_c,
+                                         font=("Segoe UI", 11, "bold"), relief="solid", bd=1,
+                                         highlightthickness=1,
+                                         highlightbackground=BTN_ACTIVE_BORDER if self.pay_method.get() else BTN_BORDER,
+                                         highlightcolor=BTN_ACTIVE_BORDER,
+                                         pady=10, cursor="hand2" if self.pay_method.get() else "arrow",
+                                         command=self._confirm_current_payment)
+        self.confirm_pay_btn.pack(fill="x", pady=(8,0))
 
     def _build_payment_tab_refresh(self):
         """Called when tip/method changes — rebuilds payment tab."""
         self.panel_tab.set("payment")
         self._switch_panel_tab()
+
+    def _current_payment_totals(self):
+        order = self.orders.get(self.selected_table, [])
+        sub = sum(i["price"] * i["qty"] for i in order)
+        tax = round(sub * 0.08, 2)
+        tip_amt = sub * (self.tip_pct.get() / 100)
+        return sub, tax, tip_amt, sub + tax + tip_amt
+
+    def _refresh_payment_controls(self):
+        for method, btn in getattr(self, "pay_method_buttons", {}).items():
+            selected = self.pay_method.get() == method
+            btn.config(bg=BTN_ACTIVE if selected else BTN_DARK,
+                       fg="#7EE89A" if selected else "#E6EDF3",
+                       highlightbackground=BTN_ACTIVE_BORDER if selected else BTN_BORDER)
+        for pct, btn in getattr(self, "tip_buttons", {}).items():
+            selected = self.tip_pct.get() == pct
+            btn.config(bg=BTN_ACTIVE if selected else BTN_DARK,
+                       fg="#7EE89A" if selected else "#E6EDF3",
+                       highlightbackground=BTN_ACTIVE_BORDER if selected else BTN_BORDER)
+
+        _, _, tip_amt, grand = self._current_payment_totals()
+        self.tip_label.config(text=f"Tip ({self.tip_pct.get()}%)")
+        self.tip_amount_label.config(text=f"${tip_amt:.2f}")
+        self.grand_label.config(text=f"${grand:.2f}")
+        has_method = bool(self.pay_method.get())
+        self.confirm_pay_btn.config(
+            text=f"Confirm {self.pay_method.get()} — ${grand:.2f}" if has_method else "Select payment method",
+            bg=BTN_ACTIVE if has_method else BTN_DARK,
+            fg="#7EE89A" if has_method else "#8B949E",
+            cursor="hand2" if has_method else "arrow",
+            highlightbackground=BTN_ACTIVE_BORDER if has_method else BTN_BORDER,
+        )
+
+    def _confirm_current_payment(self):
+        if not self.pay_method.get():
+            return
+        _, _, tip_amt, grand = self._current_payment_totals()
+        self._confirm_payment(grand, tip_amt)
 
     # ── Floor canvas drawing ───────────────────────────────────────────────
     def _refresh_floor(self):
@@ -911,9 +1162,13 @@ class FLOWApp(tk.Tk):
             cnt = sum(1 for t in TABLE_LAYOUT if self.table_statuses.get(t["id"]) == key)
             lbl.config(text=str(cnt))
 
+        if hasattr(self, "schedule_frame"):
+            self._render_schedule()
+
         for w in self.res_frame.winfo_children():
             w.destroy()
         for r in self.reservations:
+            reservation_id = r.get("reservation_id")
             name  = r.get("customer_name","Guest")
             time_ = r.get("reservation_time","")
             size  = r.get("party_size","")
@@ -927,64 +1182,159 @@ class FLOWApp(tk.Tk):
                      font=("Segoe UI",9)).pack(side="right")
             tk.Label(f, text=f"Party of {size}", bg="#1C2128", fg="#8B949E",
                      font=("Segoe UI",9)).pack(anchor="w")
+            if reservation_id:
+                btn_row = tk.Frame(f, bg="#1C2128")
+                btn_row.pack(fill="x", pady=(3, 0))
+                tk.Button(btn_row, text="Accept", bg="#0F2419", fg="#3FB950",
+                          font=("Segoe UI", 8, "bold"), relief="flat", bd=0,
+                          padx=6, pady=3, cursor="hand2",
+                          command=lambda rid=reservation_id: self._accept_reservation(rid)).pack(side="left", padx=(0, 4))
+                tk.Button(btn_row, text="Cancel", bg="#2D1117", fg="#F85149",
+                          font=("Segoe UI", 8, "bold"), relief="flat", bd=0,
+                          padx=6, pady=3, cursor="hand2",
+                          command=lambda rid=reservation_id: self._cancel_reservation(rid)).pack(side="left")
 
         for w in self.orders_frame.winfo_children():
             w.destroy()
-        active = [(tid, items) for tid, items in self.orders.items() if items and tid not in self.table_order_ids]
-        if not active and not self.web_orders:
+
+        # Split DB orders into online vs table
+        online_orders = []
+        table_orders  = []
+        for order in self.web_orders:
+            kind, label = self._classify_order(order)
+            if kind == "online":
+                online_orders.append((order, label))
+            else:
+                table_orders.append((order, label))
+
+        # In-memory pending table orders (not yet sent to kitchen)
+        pending = [(tid, items) for tid, items in self.orders.items() if items and tid not in self.table_order_ids]
+
+        if not online_orders and not table_orders and not pending:
             empty_text = "No active orders"
             if not MYSQL_ORDERS_AVAILABLE:
-                empty_text = f"MySQL orders unavailable: {MYSQL_IMPORT_ERROR}"
+                empty_text = f"MySQL unavailable"
             tk.Label(self.orders_frame, text=empty_text, bg="#161B22",
                      fg="#444D56", font=("Segoe UI",10,"italic")).pack(anchor="w", pady=4)
-        for order in self.web_orders:
-            order_id = order.get("order_id")
-            total = float(order.get("total_amount") or 0)
-            table_number = order.get("table_number")
-            branch_name = order.get("branch_name") or f"Branch {order.get('branch_id', '')}".strip()
-            table_label = "Web Order" if table_number in (None, 0, "0") else f"Table {table_number}"
-            notes = order.get("notes") or ""
-            if notes.startswith("Employee POS table "):
-                table_label = notes.replace("Employee POS table ", "", 1)
-            f = tk.Frame(self.orders_frame, bg="#102A2A", pady=4, padx=8, cursor="hand2")
-            f.pack(fill="x", pady=2)
-            top = tk.Frame(f, bg="#102A2A")
-            top.pack(fill="x")
-            tk.Label(top, text=f"Order #{order_id}", bg="#102A2A", fg="#D4A843",
-                     font=("Segoe UI",10,"bold")).pack(side="left")
-            tk.Label(top, text=f"${total:.2f}", bg="#102A2A", fg="#3FB950",
-                     font=("Segoe UI",10,"bold")).pack(side="right")
-            tk.Label(f, text=f"{table_label} · {branch_name} · Tap for items", bg="#102A2A", fg="#8B949E",
-                     font=("Segoe UI",9), wraplength=160).pack(anchor="w")
-            f.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
-            for child in f.winfo_children():
-                child.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
-        for tid, items in active:
-            total = sum(i["price"]*i["qty"] for i in items)
-            f = tk.Frame(self.orders_frame, bg="#1C2128", pady=4, padx=8, cursor="hand2")
-            f.pack(fill="x", pady=2)
-            top = tk.Frame(f, bg="#1C2128")
-            top.pack(fill="x")
-            tk.Label(top, text=tid, bg="#1C2128", fg="#D4A843",
-                     font=("Segoe UI",10,"bold")).pack(side="left")
-            tk.Label(top, text=f"${total:.2f}", bg="#1C2128", fg="#3FB950",
-                     font=("Segoe UI",10,"bold")).pack(side="right")
-            prev = ", ".join(f"{i['qty']}× {i['name']}" for i in items)
-            tk.Label(f, text=prev, bg="#1C2128", fg="#8B949E",
-                     font=("Segoe UI",9), wraplength=160).pack(anchor="w")
-            f.bind("<Button-1>", lambda e, i=tid: self._on_table_click(i))
+            return
+
+        # ____ Online Orders section ____
+        if online_orders:
+            tk.Label(self.orders_frame, text="ONLINE", bg="#161B22", fg="#3FB950",
+                     font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=4, pady=(4,2))
+            for order, label in online_orders:
+                order_id   = order.get("order_id")
+                total      = float(order.get("total_amount") or 0)
+                branch_name = order.get("branch_name") or f"Branch {order.get('branch_id','')}"
+                f = tk.Frame(self.orders_frame, bg="#0D2A1A", pady=4, padx=8, cursor="hand2")
+                f.pack(fill="x", pady=1)
+                top = tk.Frame(f, bg="#0D2A1A")
+                top.pack(fill="x")
+                tk.Label(top, text=f"#{order_id}  {label}", bg="#0D2A1A", fg="#3FB950",
+                         font=("Segoe UI",10,"bold")).pack(side="left")
+                tk.Label(top, text=f"${total:.2f}", bg="#0D2A1A", fg="#D4A843",
+                         font=("Segoe UI",10,"bold")).pack(side="right")
+                tk.Label(f, text=branch_name, bg="#0D2A1A", fg="#8B949E",
+                         font=("Segoe UI",8), wraplength=160).pack(anchor="w")
+                notes = order.get("notes") or ""
+                if notes:
+                    preview = notes if len(notes) <= 80 else notes[:77] + "..."
+                    tk.Label(f, text=f"Notes / Allergies: {preview}", bg="#0D2A1A", fg="#D4A843",
+                             font=("Segoe UI",8), wraplength=160, justify="left").pack(anchor="w", pady=(2, 0))
+                f.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
+                for child in f.winfo_children():
+                    child.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
+
+        # ____ Table Orders section ____
+        if table_orders or pending:
+            tk.Label(self.orders_frame, text="IN-RESTAURANT", bg="#161B22", fg="#D4A843",
+                     font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=4, pady=(6,2))
+            for order, label in table_orders:
+                order_id    = order.get("order_id")
+                total       = float(order.get("total_amount") or 0)
+                branch_name = order.get("branch_name") or f"Branch {order.get('branch_id','')}"
+                f = tk.Frame(self.orders_frame, bg="#1A1400", pady=4, padx=8, cursor="hand2")
+                f.pack(fill="x", pady=1)
+                top = tk.Frame(f, bg="#1A1400")
+                top.pack(fill="x")
+                tk.Label(top, text=f"#{order_id}  {label}", bg="#1A1400", fg="#D4A843",
+                         font=("Segoe UI",10,"bold")).pack(side="left")
+                tk.Label(top, text=f"${total:.2f}", bg="#1A1400", fg="#3FB950",
+                         font=("Segoe UI",10,"bold")).pack(side="right")
+                tk.Label(f, text=branch_name, bg="#1A1400", fg="#8B949E",
+                         font=("Segoe UI",8), wraplength=160).pack(anchor="w")
+                notes = order.get("notes") or ""
+                if notes:
+                    preview = notes if len(notes) <= 80 else notes[:77] + "..."
+                    tk.Label(f, text=f"Notes / Allergies: {preview}", bg="#1A1400", fg="#D4A843",
+                             font=("Segoe UI",8), wraplength=160, justify="left").pack(anchor="w", pady=(2, 0))
+                f.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
+                for child in f.winfo_children():
+                    child.bind("<Button-1>", lambda e, oid=order_id: self._show_web_order(oid))
+            # Pending in-memory orders (not yet sent to kitchen)
+            for tid, items in pending:
+                total = sum(i["price"]*i["qty"] for i in items)
+                f = tk.Frame(self.orders_frame, bg="#1A1400", pady=4, padx=8, cursor="hand2")
+                f.pack(fill="x", pady=1)
+                top = tk.Frame(f, bg="#1A1400")
+                top.pack(fill="x")
+                tk.Label(top, text=f"{tid}  (pending)", bg="#1A1400", fg="#D4A843",
+                         font=("Segoe UI",10,"bold")).pack(side="left")
+                tk.Label(top, text=f"${total:.2f}", bg="#1A1400", fg="#3FB950",
+                         font=("Segoe UI",10,"bold")).pack(side="right")
+                preview = ", ".join(f"{i['qty']}× {i['name']}" for i in items[:2])
+                tk.Label(f, text=preview, bg="#1A1400", fg="#8B949E",
+                         font=("Segoe UI",8), wraplength=160).pack(anchor="w")
+                f.bind("<Button-1>", lambda e, i=tid: self._on_table_click(i))
+                for child in f.winfo_children():
+                    child.bind("<Button-1>", lambda e, i=tid: self._on_table_click(i))
 
     def _show_web_order(self, order_id):
+        if not order_id:
+            return
+        if self._order_detail_window is not None:
+            try:
+                if self._order_detail_window.winfo_exists():
+                    self._order_detail_window.lift()
+                    return
+            except tk.TclError:
+                pass
+            self._order_detail_window = None
+
+        current_order = next((order for order in self.web_orders if order.get("order_id") == order_id), {})
+        kind, label = self._classify_order(current_order)
+        title = f"{label} #{order_id}"
+        subtitle = "Paid online · Sent from customer website" if kind == "online" else "In-restaurant table order"
         items = get_order_items(order_id) if MYSQL_ORDERS_AVAILABLE else []
         window = tk.Toplevel(self)
-        window.title(f"Web Order #{order_id}")
+        window.title(title)
         window.configure(bg="#161B22")
         window.geometry("420x420")
+        window.transient(self)
+        window.lift()
+        self._order_detail_window = window
 
-        tk.Label(window, text=f"Web Order #{order_id}", bg="#161B22", fg="#D4A843",
+        def close_order_window():
+            if self._order_detail_window is window:
+                self._order_detail_window = None
+            try:
+                if window.winfo_exists():
+                    window.destroy()
+            except tk.TclError:
+                pass
+            self.after(50, self._redraw_after_order_popup)
+
+        window.protocol("WM_DELETE_WINDOW", close_order_window)
+
+        tk.Label(window, text=title, bg="#161B22", fg="#D4A843",
                  font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=16, pady=(16, 4))
-        tk.Label(window, text="Paid online · Sent from customer website", bg="#161B22", fg="#8B949E",
+        tk.Label(window, text=subtitle, bg="#161B22", fg="#8B949E",
                  font=("Segoe UI", 10)).pack(anchor="w", padx=16, pady=(0, 10))
+        order_notes = current_order.get("notes") or ""
+        if order_notes:
+            tk.Label(window, text=f"Notes / Allergies: {order_notes}", bg="#1C2128", fg="#D4A843",
+                     font=("Segoe UI", 9), wraplength=380, justify="left",
+                     padx=10, pady=8).pack(fill="x", padx=16, pady=(0, 10))
 
         body = tk.Frame(window, bg="#161B22")
         body.pack(fill="both", expand=True, padx=16)
@@ -1003,19 +1353,30 @@ class FLOWApp(tk.Tk):
                      font=("Segoe UI", 10, "bold")).pack(side="right")
             notes = item.get("special_instructions")
             if notes:
-                tk.Label(row, text=f"Notes: {notes}", bg="#1C2128", fg="#D4A843",
+                tk.Label(row, text=f"Item Notes: {notes}", bg="#1C2128", fg="#D4A843",
                          font=("Segoe UI", 9), wraplength=340, justify="left").pack(anchor="w", pady=(4, 0))
 
         actions = tk.Frame(window, bg="#161B22")
         actions.pack(fill="x", padx=16, pady=16)
         tk.Button(actions, text="Mark Served", bg="#1C2128", fg="#D4A843",
                   font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=10, pady=8,
-                  command=lambda: self._update_web_order(order_id, "SERVED", window)).pack(side="left", fill="x", expand=True, padx=(0, 4))
+                  command=lambda: self._update_web_order(order_id, "SERVED", close_order_window)).pack(side="left", fill="x", expand=True, padx=(0, 4))
         tk.Button(actions, text="Mark Completed", bg="#0F2419", fg="#3FB950",
                   font=("Segoe UI", 10, "bold"), relief="flat", bd=0, padx=10, pady=8,
-                  command=lambda: self._update_web_order(order_id, "COMPLETED", window)).pack(side="left", fill="x", expand=True)
+                  command=lambda: self._update_web_order(order_id, "COMPLETED", close_order_window)).pack(side="left", fill="x", expand=True)
 
-    def _update_web_order(self, order_id, status, window=None):
+    def _redraw_after_order_popup(self):
+        try:
+            if not self.winfo_exists():
+                return
+            self.deiconify()
+            self.update_idletasks()
+            self._refresh_floor()
+            self._refresh_sidebar()
+        except tk.TclError:
+            pass
+
+    def _update_web_order(self, order_id, status, close_window=None):
         if not MYSQL_ORDERS_AVAILABLE:
             messagebox.showerror("Orders Unavailable", "MySQL order functions are unavailable.")
             return
@@ -1023,25 +1384,204 @@ class FLOWApp(tk.Tk):
         if not ok:
             messagebox.showerror("Order Update Failed", message)
             return
-        if window:
-            window.destroy()
+        if close_window:
+            close_window()
         messagebox.showinfo("Order Updated", message)
         self.web_orders = self._load_web_orders()
         self._refresh_sidebar()
 
+    def _accept_reservation(self, reservation_id):
+        ok = update_reservation_status_db(reservation_id, "SEATED")
+        if ok:
+            self.reservations = load_todays_reservations()
+            self._refresh_sidebar()
+
+    def _cancel_reservation(self, reservation_id):
+        ok = update_reservation_status_db(reservation_id, "CANCELLED")
+        if ok:
+            self.reservations = load_todays_reservations()
+            self._refresh_sidebar()
+
+    def _open_kitchen_board(self):
+        """Opens a live kitchen status board showing all IN_PROGRESS orders."""
+        win = tk.Toplevel(self)
+        win.title("Kitchen Board")
+        win.configure(bg="#0D1117")
+        win.geometry("860x560")
+        win.transient(self)
+        win.lift()
+        win.focus_force()
+
+        hdr = tk.Frame(win, bg="#161B22", height=48)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="Kitchen Board", bg="#161B22", fg="#D4A843",
+                 font=("Segoe UI", 15, "bold")).pack(side="left", padx=16, pady=10)
+        tk.Label(hdr, text="IN_PROGRESS orders — refreshes every 10 s", bg="#161B22", fg="#8B949E",
+                 font=("Segoe UI", 9)).pack(side="left")
+
+        body = tk.Frame(win, bg="#0D1117")
+        body.pack(fill="both", expand=True, padx=12, pady=12)
+        refresh_after_id = {"id": None}
+
+        def close_board():
+            if refresh_after_id["id"] is not None:
+                try:
+                    win.after_cancel(refresh_after_id["id"])
+                except tk.TclError:
+                    pass
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", close_board)
+
+        def refresh():
+            try:
+                if not win.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            for w in body.winfo_children():
+                w.destroy()
+            orders = get_active_orders() if MYSQL_ORDERS_AVAILABLE else []
+            if not orders:
+                tk.Label(body, text="No in-progress orders right now.",
+                         bg="#0D1117", fg="#8B949E", font=("Segoe UI", 13)).pack(expand=True)
+                if win.winfo_exists():
+                    refresh_after_id["id"] = win.after(10000, refresh)
+                return
+
+            online_orders = []
+            table_orders = []
+            for order in orders:
+                kind, label = self._classify_order(order)
+                if kind == "online":
+                    online_orders.append((order, label))
+                else:
+                    table_orders.append((order, label))
+
+            columns = tk.Frame(body, bg="#0D1117")
+            columns.pack(fill="both", expand=True)
+
+            def make_column(parent, title, rows, accent, empty_text):
+                outer = tk.Frame(parent, bg="#0D1117")
+                outer.pack(side="left", fill="both", expand=True, padx=6)
+                tk.Label(outer, text=title, bg="#0D1117", fg=accent,
+                         font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 6))
+
+                canvas = tk.Canvas(outer, bg="#0D1117", highlightthickness=0)
+                sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+                canvas.configure(yscrollcommand=sb.set)
+                sb.pack(side="right", fill="y")
+                canvas.pack(side="left", fill="both", expand=True)
+                inner = tk.Frame(canvas, bg="#0D1117")
+                win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+                canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win_id, width=e.width))
+                inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+                if not rows:
+                    tk.Label(inner, text=empty_text, bg="#0D1117", fg="#444D56",
+                             font=("Segoe UI", 10, "italic")).pack(anchor="w", pady=8)
+                for order, label in rows:
+                    draw_order_card(inner, order, label, accent)
+
+            def draw_order_card(parent, order, label, accent):
+                oid    = order["order_id"]
+                notes  = order.get("notes") or ""
+                branch = order.get("branch_name") or f"Branch {order.get('branch_id','')}"
+                dt     = str(order.get("order_datetime", ""))[:16]
+                total  = float(order.get("total_amount") or 0)
+
+                card = tk.Frame(parent, bg="#161B22", padx=12, pady=10)
+                card.pack(fill="x", pady=4)
+
+                top = tk.Frame(card, bg="#161B22")
+                top.pack(fill="x")
+                tk.Label(top, text=f"Order #{oid}", bg="#161B22", fg="#D4A843",
+                         font=("Segoe UI", 12, "bold")).pack(side="left")
+                tk.Label(top, text=f"{label}  ·  {branch}  ·  {dt}  ·  ${total:.2f}",
+                         bg="#161B22", fg="#8B949E", font=("Segoe UI", 9)).pack(side="left", padx=10)
+
+                items = get_order_items(oid) if MYSQL_ORDERS_AVAILABLE else []
+                items_f = tk.Frame(card, bg="#1C2128", padx=8, pady=4)
+                items_f.pack(fill="x", pady=(6, 8))
+                if notes:
+                    tk.Label(items_f, text=f"Notes / Allergies: {notes}", bg="#1C2128", fg="#D4A843",
+                             font=("Segoe UI", 9), wraplength=360, justify="left").pack(anchor="w", pady=(0, 4))
+                if not items:
+                    tk.Label(items_f, text="(no items)", bg="#1C2128", fg="#8B949E",
+                             font=("Segoe UI", 9, "italic")).pack(anchor="w")
+                for item in items:
+                    qty  = item.get("quantity") or 1
+                    name = item.get("item_name") or "Item"
+                    note = item.get("special_instructions") or ""
+                    row  = tk.Frame(items_f, bg="#1C2128")
+                    row.pack(fill="x", pady=1)
+                    tk.Label(row, text=f"  {qty}×  {name}", bg="#1C2128", fg="#E6EDF3",
+                             font=("Segoe UI", 10)).pack(side="left")
+                    if note:
+                        tk.Label(row, text=f"— Item Notes: {note}", bg="#1C2128", fg="#D4A843",
+                                 font=("Segoe UI", 9, "italic")).pack(side="left", padx=6)
+
+                btns = tk.Frame(card, bg="#161B22")
+                btns.pack(anchor="e")
+
+                def mark(status, o=oid):
+                    if MYSQL_ORDERS_AVAILABLE:
+                        update_order_status(o, status)
+                    refresh()
+
+                tk.Button(btns, text="Mark Ready", bg="#1A1030", fg="#A371F7",
+                          font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
+                          padx=10, pady=5, cursor="hand2",
+                          command=lambda o=oid: mark("SERVED", o)).pack(side="left", padx=(0, 6))
+                tk.Button(btns, text="Mark Completed", bg="#0F2419", fg="#3FB950",
+                          font=("Segoe UI", 9, "bold"), relief="flat", bd=0,
+                          padx=10, pady=5, cursor="hand2",
+                          command=lambda o=oid: mark("COMPLETED", o)).pack(side="left")
+
+            make_column(columns, "ONLINE ORDERS", online_orders, "#3FB950", "No online orders.")
+            make_column(columns, "IN-RESTAURANT TABLE ORDERS", table_orders, "#D4A843", "No table orders.")
+
+            if win.winfo_exists():
+                refresh_after_id["id"] = win.after(10000, refresh)
+
+        tk.Button(hdr, text="Refresh Now", bg="#1C2128", fg="#8B949E",
+                  font=("Segoe UI", 9), relief="flat", bd=0, padx=10, pady=6,
+                  cursor="hand2", command=refresh).pack(side="right", padx=12)
+        refresh()
+
     def _open_manager_access(self):
-        manager_id = simpledialog.askinteger("Manager Access", "Enter manager ID:", parent=self, minvalue=1)
-        if not manager_id:
+        access_code = simpledialog.askstring(
+            "Manager Access",
+            "Enter manager password or badge number:",
+            parent=self,
+            show="*",
+        )
+        if not access_code:
             return
-        manager, message = validate_manager_id(manager_id)
-        if not manager:
-            messagebox.showerror("Access Denied", message)
-            return
+        access_code = access_code.strip()
+
+        if access_code == "123":
+            manager = {"manager_name": "Manager", "branch_id": self.branch_id}
+        else:
+            try:
+                manager_id = int(access_code)
+            except ValueError:
+                messagebox.showerror("Access Denied", "Enter password 123 or a numeric manager badge number.")
+                return
+            manager, message = validate_manager_id(manager_id)
+            if not manager:
+                messagebox.showerror("Access Denied", message)
+                return
 
         manager_path = os.path.join(PROJECT_ROOT, "frontend", "manager_ui.py")
         try:
-            subprocess.Popen([sys.executable, manager_path])
-            messagebox.showinfo("Manager Access", f"Manager verified: {manager['manager_name']}")
+            subprocess.Popen([
+                sys.executable, manager_path,
+                manager["manager_name"],
+                str(manager["branch_id"]),
+            ])
+            messagebox.showinfo("Manager Access", f"Opening manager screen for {manager['manager_name']}.")
         except Exception as exc:
             messagebox.showerror("Manager Screen Failed", f"Could not open manager screen: {exc}")
 

@@ -1,9 +1,11 @@
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, time, timedelta
+from urllib.parse import quote
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -20,23 +22,27 @@ except Exception:
 
 
 app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+
+@app.after_request
+def no_cache_for_demo(response):
+    """Keep the browser from using stale customer-page assets during demos."""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 TAX_RATE = 0.08
 PAYMENT_TYPES = ["CASH", "CREDIT", "DEBIT", "GIFT_CARD", "MOBILE"]
-CATEGORIES = [
-    "Appetizers",
-    "Above Sea",
-    "Sea Level",
-    "Under the Sea",
-    "Sides",
-    "Drinks",
-    "Desserts",
-]
 BRANCHES = [
-    {"branch_id": 1, "branch_name": "Soul by the Sea - Hampton", "address": "100 Ocean Avenue, Hampton, VA", "phone": "555-0100"},
-    {"branch_id": 2, "branch_name": "Soul by the Sea - Norfolk", "address": "200 Harbor Street, Norfolk, VA", "phone": "555-0101"},
-    {"branch_id": 3, "branch_name": "Soul by the Sea - Chesapeake", "address": "300 Bay Road, Chesapeake, VA", "phone": "555-0102"},
+    {"branch_id": 1,  "branch_name": "Soul by the Sea - Hampton",       "address": "100 Settlers Landing Rd, Hampton, VA 23669",   "phone": "757-555-0101"},
+    {"branch_id": 2,  "branch_name": "Soul by the Sea - Norfolk",        "address": "250 Waterside Dr, Norfolk, VA 23510",          "phone": "757-555-0202"},
+    {"branch_id": 11, "branch_name": "Soul by the Sea - Suffolk",        "address": "780 N Main St, Suffolk, VA 23434",             "phone": "757-555-0303"},
+    {"branch_id": 12, "branch_name": "Soul by the Sea - Virginia Beach", "address": "300 21st St, Virginia Beach, VA 23451",        "phone": "757-555-0404"},
 ]
+# Online ordering is Hampton-only; other branches accept reservations and reviews.
+ORDERING_BRANCH_ID = 1
 MENU_ITEMS = [
     {"name": "Bread or Cornbread Basket", "category": "Appetizers", "price": 0.00, "description": "Complimentary bread service. Choose white, sourdough, wheat, or warm cornbread with honey butter.", "tags": "Complimentary", "complimentary": True},
     {"name": "Soul by the Sea Dip", "category": "Appetizers", "price": 14.99, "description": "Creamy seafood dip with crab, shrimp, and cheese served with pita or chips.", "tags": "Signature"},
@@ -107,7 +113,7 @@ MENU_ITEMS = [
 
 
 def api_error(message, status=400):
-    return {"ok": False, "message": message}, status
+    return jsonify({"ok": False, "message": message}), status
 
 
 def publish_event(event_type, payload):
@@ -163,37 +169,11 @@ def track_ordered_items(cart_items):
 
 
 def get_branches():
-    if not BACKEND_AVAILABLE:
-        return BRANCHES
-
-    conn = get_connection()
-    if not conn:
-        return BRANCHES
-
-    cursor = conn.cursor(dictionary=True)
-    try:
-        for branch in BRANCHES:
-            cursor.execute(
-                """
-                INSERT INTO branch (branch_id, branch_name, address, phone)
-                VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    branch_name = VALUES(branch_name),
-                    address = VALUES(address),
-                    phone = VALUES(phone)
-                """,
-                (branch["branch_id"], branch["branch_name"], branch["address"], branch["phone"]),
-            )
-        conn.commit()
-        return BRANCHES
-    except Exception:
-        return BRANCHES
-    finally:
-        close_connection(conn, cursor)
+    return BRANCHES
 
 
 def branch_exists(branch_id):
-    return any(branch["branch_id"] == branch_id for branch in get_branches())
+    return any(b["branch_id"] == branch_id for b in BRANCHES)
 
 
 def normalize_time(value):
@@ -274,10 +254,7 @@ def get_available_reservation_times(branch_id, selected_date):
     slots = []
     current = start_dt
     while current <= end_dt:
-        slot_key = current.strftime("%H:%M:%S")
-        totals = slot_counts.get(slot_key, {"reservation_count": 0, "guest_count": 0})
-        if totals["reservation_count"] < 5 and totals["guest_count"] < 40:
-            slots.append(current.strftime("%I:%M %p").lstrip("0"))
+        slots.append(current.strftime("%I:%M %p").lstrip("0"))
         current += timedelta(minutes=30)
     return slots
 
@@ -362,106 +339,52 @@ def get_or_create_menu_item_id(cursor, item):
     cursor.execute("SELECT menu_item_id FROM menu_item WHERE item_name = %s ORDER BY menu_item_id LIMIT 1", (item["name"],))
     row = cursor.fetchone()
     if row:
-        return row[0]
-
-    columns = ["item_name", "category", "description", "price"]
-    values = [item["name"], item["category"], item["description"], item["price"]]
-    if has_column(cursor, "menu_item", "active_status"):
-        columns.append("active_status")
-        values.append(True)
-    if has_column(cursor, "menu_item", "tags"):
-        columns.append("tags")
-        values.append(item["tags"])
-
-    placeholders = ", ".join(["%s"] * len(columns))
+        return row["menu_item_id"]
     cursor.execute(
-        f"INSERT INTO menu_item ({', '.join(columns)}) VALUES ({placeholders})",
-        tuple(values),
+        "INSERT INTO menu_item (item_name, category, description, price, active_status, tags) VALUES (%s,%s,%s,%s,%s,%s)",
+        (item["name"], item["category"], item["description"], item["price"], True, item.get("tags", "")),
     )
     return cursor.lastrowid
 
 
-def has_column(cursor, table_name, column_name):
-    try:
-        cursor.execute(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = %s
-              AND COLUMN_NAME = %s
-            """,
-            (table_name, column_name),
-        )
-        row = cursor.fetchone()
-        if isinstance(row, dict):
-            return next(iter(row.values()), 0) > 0
-        return (row[0] if row else 0) > 0
-    except Exception:
-        return False
+def option_summary(item):
+    selected = item.get("selected_options") or {}
+    if not isinstance(selected, dict):
+        return ""
+    return "; ".join(
+        f"{str(label).strip()}: {str(value).strip()}"
+        for label, value in selected.items()
+        if str(value).strip()
+    )
 
 
-def column_is_nullable(cursor, table_name, column_name):
-    try:
-        cursor.execute(
-            """
-            SELECT IS_NULLABLE
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = %s
-              AND COLUMN_NAME = %s
-            """,
-            (table_name, column_name),
-        )
-        row = cursor.fetchone()
-        value = row.get("IS_NULLABLE") if isinstance(row, dict) else (row[0] if row else "YES")
-        return value == "YES"
-    except Exception:
-        return True
-
-
-def row_value(row, key, index):
-    if isinstance(row, dict):
-        return row[key]
-    return row[index]
+def cart_notes(cart):
+    lines = []
+    for item in cart:
+        summary = option_summary(item)
+        if summary:
+            lines.append(f"{item['name']} - {summary}")
+    return lines
 
 
 def insert_order_item(cursor, order_id, menu_item_id, item, notes):
-    if has_column(cursor, "order_item", "special_instructions"):
-        cursor.execute(
-            """
-            INSERT INTO order_item (order_id, menu_item_id, quantity, item_price, special_instructions)
-            VALUES (%s, %s, 1, %s, %s)
-            """,
-            (order_id, menu_item_id, item["price"], notes or None),
-        )
-    else:
-        cursor.execute(
-            """
-            INSERT INTO order_item (order_id, menu_item_id, quantity, item_price)
-            VALUES (%s, %s, 1, %s)
-            """,
-            (order_id, menu_item_id, item["price"]),
-        )
+    item_notes = []
+    summary = option_summary(item)
+    if summary:
+        item_notes.append(summary)
+    if notes:
+        item_notes.append(f"Customer Notes / Allergies: {notes}")
+    special_instructions = " | ".join(item_notes) or None
+    cursor.execute(
+        "INSERT INTO order_item (order_id, menu_item_id, quantity, item_price, special_instructions) VALUES (%s,%s,1,%s,%s)",
+        (order_id, menu_item_id, item["price"], special_instructions),
+    )
 
 
 def insert_payment(cursor, order_id, payment_type, card_last4, total_amount, tip_amount):
-    columns = ["order_id", "payment_type", "amount"]
-    values = [order_id, payment_type, total_amount]
-    if has_column(cursor, "payment", "card_last4"):
-        columns.insert(2, "card_last4")
-        values.insert(2, card_last4)
-    if has_column(cursor, "payment", "tip_amount"):
-        columns.append("tip_amount")
-        values.append(tip_amount)
-    if has_column(cursor, "payment", "payment_datetime"):
-        columns.append("payment_datetime")
-        values.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-
-    placeholders = ", ".join(["%s"] * len(columns))
     cursor.execute(
-        f"INSERT INTO payment ({', '.join(columns)}) VALUES ({placeholders})",
-        tuple(values),
+        "INSERT INTO payment (order_id, payment_type, card_last4, amount, tip_amount, payment_datetime) VALUES (%s,%s,%s,%s,%s,%s)",
+        (order_id, payment_type, card_last4, total_amount, tip_amount, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     )
 
 
@@ -483,11 +406,11 @@ def aggregate_inventory_requirements(cursor, branch_id, cart):
             WHERE mi.item_name = %s
         """, (branch_id, item["name"]))
         for row in cursor.fetchall():
-            inventory_item_id = row_value(row, "inventory_item_id", 0)
-            item_name = row_value(row, "item_name", 1)
-            quantity_on_hand = row_value(row, "quantity_on_hand", 2)
-            reorder_level = row_value(row, "reorder_level", 3)
-            quantity_required = row_value(row, "quantity_required", 4)
+            inventory_item_id = row["inventory_item_id"]
+            item_name         = row["item_name"]
+            quantity_on_hand  = row["quantity_on_hand"]
+            reorder_level     = row["reorder_level"]
+            quantity_required = row["quantity_required"]
             if inventory_item_id not in requirements:
                 requirements[inventory_item_id] = {
                     "inventory_item_id": inventory_item_id,
@@ -511,7 +434,7 @@ def decrement_inventory_for_cart(cursor, branch_id, cart):
             FOR UPDATE
         """, (req["inventory_item_id"],))
         row = cursor.fetchone()
-        available = float(row_value(row, "quantity_on_hand", 2)) if row else 0
+        available = float(row["quantity_on_hand"]) if row else 0
         if not row or available < req["quantity_needed"]:
             raise ValueError(f"Sold out: {req['item_name']} needs {req['quantity_needed']:.2f}, has {available:.2f}")
 
@@ -520,11 +443,11 @@ def decrement_inventory_for_cart(cursor, branch_id, cart):
             "UPDATE inventory_item SET quantity_on_hand = %s WHERE inventory_item_id = %s",
             (new_quantity, req["inventory_item_id"]),
         )
-        reorder_level = float(row_value(row, "reorder_level", 3))
+        reorder_level = float(row["reorder_level"])
         if new_quantity <= reorder_level:
             low_items.append({
                 "inventory_item_id": req["inventory_item_id"],
-                "item_name": row_value(row, "item_name", 1),
+                "item_name": row["item_name"],
                 "quantity_on_hand": new_quantity,
                 "reorder_level": reorder_level,
             })
@@ -539,11 +462,37 @@ def parse_cart(raw_cart):
     cart = []
     for entry in raw_cart:
         name = entry.get("name") if isinstance(entry, dict) else None
-        if name not in menu_by_name:
+        if not name:
             raise ValueError("One or more cart items are unavailable.")
-        if not menu_by_name[name].get("complimentary"):
-            cart.append(menu_by_name[name])
-    if not cart:
+        if name in menu_by_name:
+            item = dict(menu_by_name[name])
+        elif isinstance(entry, dict):
+            # Customer menu is intentionally static for the demo. Accept its
+            # item payload if backend constants drift, instead of failing the
+            # core ordering flow.
+            try:
+                price = round(float(entry.get("price") or 0), 2)
+            except (TypeError, ValueError):
+                raise ValueError("One or more cart items are unavailable.")
+            item = {
+                "name": str(name)[:50],
+                "category": str(entry.get("category") or "Customer Order")[:30],
+                "description": str(entry.get("description") or "")[:120],
+                "price": price,
+                "tags": str(entry.get("tags") or "")[:30],
+                "complimentary": bool(entry.get("complimentary")),
+            }
+        else:
+            raise ValueError("One or more cart items are unavailable.")
+        selected_options = entry.get("selected_options") if isinstance(entry, dict) else None
+        if isinstance(selected_options, dict):
+            item["selected_options"] = {
+                str(label)[:40]: str(value)[:80]
+                for label, value in selected_options.items()
+                if str(value).strip()
+            }
+        cart.append(item)
+    if not any(not item.get("complimentary") for item in cart):
         raise ValueError("Please add at least one paid item before placing an order.")
     return cart
 
@@ -552,7 +501,7 @@ def create_order_with_payment(cart, notes, payment_type, tip_amount, card_last4)
     if not BACKEND_AVAILABLE:
         return None, "Database unavailable."
 
-    branch_id = BRANCHES[0]["branch_id"]
+    branch_id = ORDERING_BRANCH_ID
     employee_id = get_or_create_online_staff(branch_id)
     if not employee_id:
         return None, "No staff account available for online order processing."
@@ -561,47 +510,42 @@ def create_order_with_payment(cart, notes, payment_type, tip_amount, card_last4)
     if not conn:
         return None, "Database connection failed."
 
-    cursor = conn.cursor()
+    cursor = conn.cursor(dictionary=True)
     try:
+        paid_cart = [item for item in cart if not item.get("complimentary")]
+        note_lines = []
+        if notes:
+            note_lines.append(f"Customer Notes / Allergies: {notes}")
+        option_lines = cart_notes(cart)
+        if option_lines:
+            note_lines.append("Options: " + " | ".join(option_lines))
+        order_notes = " | ".join(note_lines) or None
+
         cursor.execute(
-            """
-            INSERT INTO party (reservation_id, branch_id, table_number, party_size, check_in_datetime)
-            VALUES (NULL, %s, 0, 1, NOW())
-            """,
+            "INSERT INTO party (reservation_id, branch_id, table_number, party_size, check_in_datetime) VALUES (NULL,%s,0,1,NOW())",
             (branch_id,),
         )
         party_id = cursor.lastrowid
-        subtotal = round(sum(item["price"] for item in cart), 2)
+        subtotal = round(sum(item["price"] for item in paid_cart), 2)
         tax_amount = round(subtotal * TAX_RATE, 2)
         total_amount = round(subtotal + tax_amount, 2)
 
-        if has_column(cursor, "orders", "notes"):
-            cursor.execute(
-                """
-                INSERT INTO orders
-                    (party_id, branch_id, employee_id, order_datetime, order_status,
-                     subtotal, tax_amount, total_amount, notes)
-                VALUES (%s, %s, %s, NOW(), 'IN_PROGRESS', %s, %s, %s, %s)
-                """,
-                (party_id, branch_id, employee_id, subtotal, tax_amount, total_amount, notes or None),
-            )
-        else:
-            cursor.execute(
-                """
-                INSERT INTO orders
-                    (party_id, branch_id, employee_id, order_datetime, order_status,
-                     subtotal, tax_amount, total_amount)
-                VALUES (%s, %s, %s, NOW(), 'IN_PROGRESS', %s, %s, %s)
-                """,
-                (party_id, branch_id, employee_id, subtotal, tax_amount, total_amount),
-            )
+        cursor.execute(
+            """
+            INSERT INTO orders
+                (party_id, branch_id, employee_id, order_datetime, order_status,
+                 subtotal, tax_amount, total_amount, notes)
+            VALUES (%s,%s,%s,NOW(),'IN_PROGRESS',%s,%s,%s,%s)
+            """,
+            (party_id, branch_id, employee_id, subtotal, tax_amount, total_amount, order_notes),
+        )
         order_id = cursor.lastrowid
 
-        for item in cart:
+        for item in paid_cart:
             menu_item_id = get_or_create_menu_item_id(cursor, item)
             insert_order_item(cursor, order_id, menu_item_id, item, notes)
 
-        low_inventory_items = decrement_inventory_for_cart(cursor, branch_id, cart)
+        low_inventory_items = decrement_inventory_for_cart(cursor, branch_id, paid_cart)
         insert_payment(cursor, order_id, payment_type, card_last4, total_amount, tip_amount)
         conn.commit()
         for item in low_inventory_items:
@@ -617,13 +561,14 @@ def create_order_with_payment(cart, notes, payment_type, tip_amount, card_last4)
             "payment_type": payment_type,
             "card_last4": card_last4,
             "items": [item["name"] for item in cart],
+            "options": option_lines,
         }
         publish_event(
             "new_order",
             event_payload,
         )
         publish_order_event("new_order", branch_id, order_id, event_payload)
-        track_ordered_items(cart)
+        track_ordered_items(paid_cart)
         return order_id, "Order sent to the kitchen."
     except Exception as exc:
         conn.rollback()
@@ -632,18 +577,50 @@ def create_order_with_payment(cart, notes, payment_type, tip_amount, card_last4)
         close_connection(conn, cursor)
 
 
+@app.get("/api/menu-items")
+def get_menu_items_api():
+    """Returns active menu items from the database so the customer web stays in sync with manager changes."""
+    if not BACKEND_AVAILABLE:
+        return jsonify({"ok": True, "items": []})
+    conn = get_connection()
+    if not conn:
+        return jsonify({"ok": True, "items": []})
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT item_name AS name, category, price, description, tags FROM menu_item WHERE active_status = 1 ORDER BY category, item_name"
+        )
+        items = cursor.fetchall()
+        for item in items:
+            item["price"] = float(item["price"])
+            item["complimentary"] = item.get("price", 1) == 0
+        return jsonify({"ok": True, "items": items})
+    except Exception:
+        return jsonify({"ok": True, "items": []})
+    finally:
+        close_connection(conn, cursor)
+
+
 @app.route("/")
 def index():
-    dates = [(datetime.now() + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(7)]
-    bootstrap = {
-        "branches": get_branches(),
-        "categories": CATEGORIES,
-        "dates": dates,
-        "menuItems": MENU_ITEMS,
-        "paymentTypes": PAYMENT_TYPES,
-        "taxRate": TAX_RATE,
-    }
-    return render_template("index.html", bootstrap_json=json.dumps(bootstrap))
+    return render_template("index.html")
+
+
+
+@app.route("/api/employee-access", methods=["POST"])
+@app.route("/api/employee_access", methods=["POST"])
+def employee_access():
+    data = request.get_json(silent=True) or {}
+    if (data.get("password") or "").strip() != "123":
+        return api_error("Incorrect employee access password.", 403)
+
+    try:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        employee_path = os.path.join(project_root, "frontend", "employee_ui.py")
+        subprocess.Popen([sys.executable, employee_path], cwd=project_root)
+        return jsonify({"ok": True, "message": "Employee POS opening."})
+    except Exception as exc:
+        return api_error(f"Could not open Employee POS: {exc}", 500)
 
 
 @app.get("/api/reservation-times")
@@ -653,12 +630,10 @@ def reservation_times():
         selected_date = request.args.get("date", "")
         datetime.strptime(selected_date, "%Y-%m-%d")
     except ValueError:
-        payload, status = api_error("Please select a valid branch and date.")
-        return jsonify(payload), status
+        return api_error("Please select a valid branch and date.")
 
     if not branch_exists(branch_id):
-        payload, status = api_error("Please select a valid branch.")
-        return jsonify(payload), status
+        return api_error("Please select a valid branch.")
 
     return jsonify({"ok": True, "times": get_available_reservation_times(branch_id, selected_date)})
 
@@ -684,22 +659,19 @@ def create_reservation():
     selected_date = (data.get("date") or "").strip()
     selected_time = (data.get("time") or "").strip()
 
-    if not all([name, phone, selected_date, selected_time, data.get("branch_id"), data.get("party_size")]):
-        return api_error("Please complete all reservation fields.")
-
     try:
-        branch_id = int(data["branch_id"])
-        party_size = int(data["party_size"])
+        branch_id = int(data.get("branch_id") or 0)
+        party_size = int(data.get("party_size") or 0)
         selected_dt = datetime.strptime(f"{selected_date} {selected_time}", "%Y-%m-%d %I:%M %p")
-    except ValueError:
+    except (ValueError, KeyError):
         return api_error("Please select a valid reservation date, time, and party size.")
 
     if not branch_exists(branch_id):
         return api_error("Please select a valid branch.")
     if party_size < 1 or party_size > 20:
         return api_error("Party size must be between 1 and 20.")
-    if selected_time not in get_available_reservation_times(branch_id, selected_date):
-        return api_error("That reservation slot is full or outside branch hours.")
+    if not all([name, phone, selected_date, selected_time, data.get("branch_id"), data.get("party_size")]):
+        return api_error("Please complete all reservation fields.")
     if not BACKEND_AVAILABLE:
         return api_error("Reservation system is not connected.", 503)
 
@@ -744,21 +716,15 @@ def place_order():
         return api_error(str(exc))
 
     payment = data.get("payment") or {}
-    cardholder = (payment.get("cardholder") or "").strip()
     card_number = (payment.get("card_number") or "").replace(" ", "").replace("-", "")
-    expiration = (payment.get("expiration") or "").strip()
-    cvv = (payment.get("cvv") or "").strip()
     payment_type = (payment.get("payment_type") or "").strip()
 
-    if not all([cardholder, card_number, expiration, cvv, payment_type]):
-        return api_error("Please complete all payment fields.")
+    if not payment_type:
+        return api_error("Please select a payment type.")
     if payment_type not in PAYMENT_TYPES:
         return api_error("Please select a valid payment type.")
-    if not card_number.isdigit() or len(card_number) not in (13, 14, 15, 16, 19):
-        return api_error("Card number must contain 13-19 digits.")
-    if not cvv.isdigit() or len(cvv) not in (3, 4):
-        return api_error("CVV must contain 3 or 4 digits.")
-
+    if card_number and not card_number.isdigit():
+        return api_error("Card number can only contain numbers.")
     try:
         tip_amount = round(float(payment.get("tip_amount") or 0), 2)
     except ValueError:
@@ -767,7 +733,7 @@ def place_order():
         return api_error("Tip amount cannot be negative.")
 
     notes = (data.get("notes") or "").strip()
-    card_last4 = card_number[-4:]
+    card_last4 = card_number[-4:].rjust(4, "0") if card_number else "0000"
     order_id, message = create_order_with_payment(cart, notes, payment_type, tip_amount, card_last4)
     if not order_id:
         return api_error(message, 500)
@@ -788,6 +754,37 @@ def place_order():
         "masked_card": f"**** **** **** {card_last4}",
         "token": f"tok_soul_{card_last4}",
     })
+
+
+@app.post("/api/menu-view")
+def track_menu_view():
+    """
+    Clickstream endpoint — logs which menu items a customer browses to MongoDB.
+    Called by the frontend whenever the menu is rendered or a category is switched.
+    Payload: { branch_id, category, items: [{name, item_id}] }
+    """
+    data = request.get_json(silent=True) or {}
+    branch_id = data.get("branch_id")
+    category  = data.get("category", "All")
+    items     = data.get("items", [])
+
+    try:
+        if BACKEND_AVAILABLE:
+            from config.mongo_config import get_mongo_db
+            db = get_mongo_db()
+            if db is not None and items:
+                db.clickstream.insert_one({
+                    "event_type": "menu_view",
+                    "branch_id":  branch_id,
+                    "category":   category,
+                    "items_viewed": items,
+                    "item_count": len(items),
+                    "timestamp":  datetime.utcnow(),
+                })
+    except Exception:
+        pass
+
+    return jsonify({"status": "ok"})
 
 
 @app.post("/api/reviews")
@@ -814,15 +811,6 @@ def create_review():
     user = get_current_user()
     if user:
         person_id = user["person_id"]
-    elif BACKEND_AVAILABLE:
-        conn = get_connection()
-        if conn:
-            cursor = conn.cursor()
-            try:
-                if not column_is_nullable(cursor, "review", "person_id"):
-                    person_id = get_or_create_customer("Website Guest", "0000000000")
-            finally:
-                close_connection(conn, cursor)
 
     ok, message = db_submit_review(person_id, branch_id, rating, comments)
     if not ok:

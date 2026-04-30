@@ -87,14 +87,16 @@ def get_order_events(order_id):
         return []
 
 
-def log_review(person_id, branch_id, rating, comments):
+def log_review(person_id, branch_id, rating, comments, branch_name=None, sentiment_score=None):
     """Mirrors a customer review to MongoDB for full-text search and analytics."""
     try:
         get_mongo_db().reviews.insert_one({
             "person_id": person_id,
             "branch_id": branch_id,
+            "branch_name": branch_name,
             "rating": rating,
             "comments": comments,
+            "sentiment_score": sentiment_score,
             "created_at": datetime.utcnow()
         })
         return True

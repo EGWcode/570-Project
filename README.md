@@ -1,346 +1,341 @@
-# FLOW — Enterprise Restaurant Management System
+# FLOW — Enterprise Restaurant Chain Operations & Analytics
 
-**FLOW is a centralized database management system for Soul by the Sea restaurant chain**
+FLOW is a centralized restaurant operations platform built for the fictional **Soul by the Sea** restaurant chain. It supports customer ordering and reservations, staff POS workflows, manager operations, and HQ/admin analytics across multiple branches.
 
-**Designed & Built by:**
-Zoe Battle,
-Day Ekoi,
-Jonah Goodwine,
-Vaughn Huey, 
-Miles Walker, &
-Ethan Williams
+Built for **CSC 570 - Database Management Systems | Spring 2026 | Hampton University**.
 
-
-CSC 570 - Database Management Systems | Spring 26' | Hampton University: Computer Science Department
+**Team:** Zoe Battle, Day Ekoi, Jonah Goodwine, Vaughn Huey, Miles Walker, and Ethan Williams
 
 ---
 
-## What is FLOW?
+## Scenario Coverage
 
-FLOW is a desktop-based enterprise management system built for Soul by the Sea, a multi-branch restaurant chain. The platform centralizes all restaurant operations into a single system, allowing customers, staff, managers, and admins to interact with the database through role-based interfaces. FLOW uses a hybrid SQL and NoSQL architecture to handle both structured transactional data and unstructured data like customer feedback and real-time order updates.
+This project implements Scenario 5: **Enterprise Restaurant Chain Operations & Analytics Platform**.
+
+FLOW demonstrates:
+
+- Customer-facing menu browsing, reservations, online ordering, and feedback
+- Staff POS operations for table orders, online orders, reservations, and kitchen status
+- Manager tools for inventory, suppliers, menu items, staff scheduling, payroll summaries, and branch reports
+- Admin/HQ tools for branches, users/roles, cross-branch analytics, reviews, and clickstream behavior
+- SQL storage for consistent operational data
+- NoSQL storage for reviews, sentiment, clickstream behavior, and flexible activity data
 
 ---
 
 ## Tech Stack
 
-| Layer | Tech |
+| Layer | Technology |
 |---|---|
-| Backend | Python |
-| Frontend | Tkinter (Desktop GUI) |
-| Primary Database | MySQL |
+| Language | Python |
+| Customer Web UI | Flask, HTML, CSS, JavaScript |
+| Desktop UIs | Tkinter |
+| Relational Database | MySQL |
 | NoSQL Database | MongoDB |
-| Caching Layer | Redis |
-| Database Connector | mysql-connector-python, pymongo |
-| Environment Management | python-dotenv |
-| Version Control | GitHub |
-| Collaboration | Google Drive, Imessage |
-| IDE | VS Code |
+| Realtime/Cache Layer | Redis |
+| Python DB Libraries | mysql-connector-python, pymongo, redis |
+| Auth Support | bcrypt |
+| Environment Config | python-dotenv |
 
 ---
 
-## System Architecture
+## Application Interfaces
 
-FLOW follows a layered architecture where the Tkinter frontend communicates with the Python backend, which routes requests to either MySQL or MongoDB depending on the type of data being processed. Redis sits between the application and the databases as a caching layer for frequently accessed data.
+### Customer Web UI
 
-```
-Tkinter Desktop App (Role-Based UI)
-            ↓
-    Python Application Layer
-            ↓
-    ┌───────────────────────┐
-    │       MySQL           │  Orders, Payments, Reservations,
-    │  (Transactional)      │  Employees, Inventory, Schedules
-    └───────────────────────┘
-            ↓
-    ┌───────────────────────┐
-    │      MongoDB          │  Customer Feedback, Active Orders,
-    │  (Unstructured)       │  Table Availability, Sentiment
-    └───────────────────────┘
-            ↓
-    ┌───────────────────────┐
-    │       Redis           │  Menu Items, Branch Dashboards,
-    │  (Cache Layer)        │  Frequently Accessed Records
-    └───────────────────────┘
+Runs at:
+
+```text
+http://127.0.0.1:5001
 ```
 
+Features:
 
----
+- Browse menu items loaded from SQL
+- Place online orders and payments
+- Make reservations
+- Submit ratings and feedback
+- Generate clickstream events when browsing menu behavior
 
-## How the System Works (Frontend, Backend, Database Flow)
+### Staff POS UI
 
-- the tkinter frontend is the user interface where customers, employees, managers, and admins interact with the system  
-- the python backend acts as the logic layer, processing all actions such as placing orders, making reservations, updating inventory, and retrieving data  
-- the backend connects to the databases using python connectors and determines where data should be stored or retrieved from  
-- mysql serves as the source of truth for all structured transactional data (orders, reservations, inventory, employees)  
-- mongodb stores flexible data such as customer reviews, live activity, and analytics  
-- redis is used for caching and real-time updates such as alerts, queues, and dashboard refreshes  
-- flow: user action in the frontend → backend processes request → data stored/retrieved from database → redis updates cache/alerts → frontend refreshes and displays updated data  
+Features:
 
----
+- View online orders from the customer website
+- Create in-restaurant table orders
+- View and manage table status
+- Accept/cancel reservations
+- Open Kitchen Board
+- Mark orders served/completed
 
-## Demo Behavior (Real-Time Simulation)
+### Manager UI
 
-- in addition to manual user actions, a simulation script will run in the background  
-- this script will continuously generate activity such as:  
-  - new reservations  
-  - new orders  
-  - inventory updates  
-  - customer reviews  
-  - multi-branch activity  
-- this allows the system to demonstrate real-time behavior, where:  
-  - pos screens update dynamically  
-  - manager dashboards show live alerts (ex: low inventory)  
-  - hq view displays activity across multiple branches  
+Features:
 
----
-
-## Role Based Interfaces
-
-| Role | Access |
-|---|---|
-| Customer | View menu, place orders, make reservations, leave reviews |
-| Staff/Employee | POS order entry, update order status, assign tables, check inventory, view schedule |
-| Manager | All staff access plus branch analytics, purchase orders, employee scheduling, menu management |
-| Admin | Cross-branch reporting, enterprise analytics, manage all branches and employees |
-
----
-
-## Features
-
-### Authentication
-- Role based login screen routes users to the correct interface
-- Passwords stored as hashed values in the database
-- Roles: CUSTOMER, STAFF, MANAGER, ADMIN
-
-### Customer Interface
-- Browse active menu items
-- Place orders
-- Make and view reservations
-- Submit feedback and ratings
-
-### Staff Interface
-- POS order entry and management
-- Update order status (IN_PROGRESS, SERVED, COMPLETED, CANCELLED)
-- Assign tables and check in/out parties
-- View assigned shifts and schedules
-- Check inventory levels
-
-### Manager Interface
-- View and manage all orders and payments across branch
-- Manage employee schedules and shifts
-- View and update inventory levels
-- Create and manage purchase orders
-- View branch analytics and sales reports
-- View customer feedback and sentiment scores
+- View inventory and low-stock items
+- Inventory decrement after orders
+- Manage suppliers
 - Manage menu items and pricing
+- Manage staff scheduling
+- View payroll/estimated payroll
+- View reports: sales by hour, food cost percentage, top menu items, labor reports
 
-### Admin Interface
-- Cross-branch performance comparison
-- Enterprise-wide analytics dashboard
-- Manage all branch locations
-- Manage all employees across branches
+### Admin/HQ UI
 
+Features:
+
+- Cross-branch dashboard
+- Branch setup
+- Employee/user role management
+- Enterprise inventory and reservations views
+- Branch performance comparison
+- Review and sentiment analytics
+- Clickstream analytics
+
+---
+
+## Architecture
+
+FLOW uses a hybrid SQL/NoSQL design:
+
+```text
+Customer Web UI / Tkinter Desktop UIs
+              |
+              v
+        Python Backend Modules
+              |
+      -------------------------
+      |           |           |
+      v           v           v
+    MySQL      MongoDB      Redis
+```
+
+**MySQL** is the source of truth for structured operations:
+
+- Branches
+- Users and roles
+- Menu items and pricing
+- Reservations
+- Orders and order items
+- Payments
+- Tables/parties
+- Inventory
+- Suppliers
+- Shifts and payroll
+- SQL reports
+
+**MongoDB** stores flexible analytics data:
+
+- Reviews/ratings mirror
+- Sentiment fields
+- Clickstream/menu browsing behavior
+- Table availability/status documents
+- Order event logs
+
+**Redis** supports real-time behavior:
+
+- Pub/sub order and inventory events
+- Low-stock alerts
+- Cached table/order status helpers
 
 ---
 
 ## Project Structure
 
----
-
-## Role Based Interfaces
-
-| Role | Access |
-|---|---|
-| Customer | View menu, place orders, make reservations, leave reviews |
-| Staff/Employee | POS order entry, update order status, assign tables, check inventory, view schedule |
-| Manager | All staff access plus branch analytics, purchase orders, employee scheduling, menu management |
-| Admin | Cross-branch reporting, enterprise analytics, manage all branches and employees |
-
----
-
-## Features
-
-### Authentication
-- Role based login screen routes users to the correct interface
-- Passwords stored as hashed values in the database
-- Roles: CUSTOMER, STAFF, MANAGER, ADMIN
-
-### Customer Interface
-- Browse active menu items
-- Place orders
-- Make and view reservations
-- Submit feedback and ratings
-
-### Staff Interface
-- POS order entry and management
-- Update order status (IN_PROGRESS, SERVED, COMPLETED, CANCELLED)
-- Assign tables and check in/out parties
-- View assigned shifts and schedules
-- Check inventory levels
-
-### Manager Interface
-- View and manage all orders and payments across branch
-- Manage employee schedules and shifts
-- View and update inventory levels
-- Create and manage purchase orders
-- View branch analytics and sales reports
-- View customer feedback and sentiment scores
-- Manage menu items and pricing
-
-### Admin Interface
-- Cross-branch performance comparison
-- Enterprise-wide analytics dashboard
-- Manage all branch locations
-- Manage all employees across branches
-
-### Mobile Prototype (SwiftUI)
-- A SwiftUI iOS application was developed as a visual prototype
-- Demonstrates role-based interfaces for customers, staff, managers, and admins
-- Uses hardcoded mock data and does not connect to the live database
-- Serves as a demonstration tool for the final presentation
-
----
-
-## Project Structure
-
-```
-570-PROJECT/
-│
-├── main.py                      # Entry point, launches the Tkinter app
-├── test_connection.py           # Quick script to verify database connection
-├── requirements.txt             # All Python dependencies
-├── .env                         # Environment variables (credentials)
-├── .gitignore                   # Files excluded from version control
-├── README.md                    # Project documentation
-│
-├── config/
-│   └── db_config.py             # Database connection config, loads from .env
-│
+```text
+570-Project/
+├── main.py                       # Starts Flask, seeds DB, opens login UI
+├── requirements.txt              # Python dependencies
+├── test_connection.py            # Database connection test
+├── simulate_activity.py          # Seed/simulation utilities
 ├── database/
-│   └── schema.sql               # Full MySQL schema for flow_db
-│
+│   └── schema.sql                # MySQL schema
+├── config/
+│   ├── db_config.py              # MySQL connection
+│   ├── mongo_config.py           # MongoDB helpers
+│   └── redis_config.py           # Redis helpers
 ├── backend/
-│   ├── init.py
-│   ├── customer.py              # Customer related queries (orders, reservations, reviews)
-│   ├── employee.py              # Employee lookup and management queries
-│   ├── manager.py               # Manager level queries and reporting
-│   ├── orders.py                # Order and order item queries
-│   ├── reservations.py          # Reservation queries and availability checks
-│   ├── inventory.py             # Inventory and purchase order queries
-│   ├── payments.py              # Payment processing queries
-│   ├── reviews.py               # Review and feedback queries
-│   └── shifts.py                # Shift schedule queries
-│
+│   ├── auth.py                   # Login/user auth helpers
+│   ├── customer.py               # Customer data helpers
+│   ├── employee.py               # Employee data helpers
+│   ├── inventory.py              # Inventory checks/decrement/alerts
+│   ├── manager.py                # Manager reporting and operations
+│   ├── orders.py                 # POS/order helpers
+│   ├── payments.py               # Payment processing helpers
+│   ├── reservations.py           # Reservation helpers
+│   ├── reviews.py                # Review/sentiment helpers
+│   └── shifts.py                 # Workforce scheduling helpers
 ├── customer_web/
-│   ├── app.py               # Browser-based customer ordering website
+│   ├── app.py                    # Flask customer website/API
 │   ├── templates/
 │   │   └── index.html
 │   └── static/
-│       ├── style.css
-│       └── script.js
-│
+│       ├── script.js
+│       └── style.css
 └── frontend/
-├── init.py
-├── login.py                 # Login screen, routes staff roles and opens customer website
-├── employee_ui.py           # Staff/employee interface windows and screens
-├── manager_ui.py            # Manager interface windows and screens
-└── admin_ui.py              # Admin interface windows and screens
+    ├── login.py                  # Role-based login screen
+    ├── employee_ui.py            # Staff POS
+    ├── manager_ui.py             # Manager dashboard
+    └── HQ_ui.py                  # Admin/HQ dashboard
 ```
----
-
-## Database Schema
-
-The following tables are defined in `database/schema.sql`:
-
-**Core Entities**
-- **person** — base table for all individuals in the system
-- **customer** — subtype of person, stores dietary restrictions
-- **employee** — subtype of person, linked to a branch
-- **manager** — subtype of employee, stores salary
-- **staff** — subtype of employee, stores hourly rate and role
-- **user_account** — login credentials and role assignment for all users
-
-**Branch & Operations**
-- **branch** — individual restaurant locations
-- **branch_hours** — operating hours per branch per day of week
-
-**Reservations & Dining**
-- **reservation** — customer reservation records
-- **party** — dining party check-in and check-out tracking
-
-**Orders & Payments**
-- **orders** — order records linked to party, branch, and employee
-- **order_item** — individual line items per order
-- **payment** — payment records linked to orders
-
-**Menu**
-- **menu_item** — all menu items with pricing and availability
-- **menu_item_ingredient** — links menu items to inventory ingredients
-
-**Inventory & Procurement**
-- **inventory_item** — stock levels per branch
-- **supplier** — external supplier records
-- **purchase_order** — procurement orders placed with suppliers
-- **purchase_order_item** — individual items per purchase order
-
-**Workforce**
-- **shift_schedule** — employee shift assignments per branch
-
-**Feedback**
-- **review** — customer ratings, comments, and sentiment scores
 
 ---
 
-## Setup & Running Locally
+## Setup
 
-### Prerequisites
-- Python 3.12+
-- MySQL
-- pip3
+### 1. Install Requirements
 
-### Installation
+Python 3.12+ is recommended.
 
 ```bash
-# Clone the repo
-git clone https://github.com/EGWcode/570-Project.git
-cd flow-app
-
-# Install dependencies
 pip3 install -r requirements.txt
 ```
 
-### Database Setup
+### 2. Start Services
 
-```bash
-# Load the schema into MySQL
-mysql -u root -p < database/schema.sql
-```
+The full demo expects these services to be running locally:
 
-### Environment Configuration
+- MySQL on `localhost:3306`
+- MongoDB on `localhost:27017`
+- Redis on `localhost:6379`
 
-The `.env` file is included in the repo for team collaboration. It is pre-configured with the following shared credentials:
+Run all three services for the full demo.
 
+### 3. Configure Environment
+
+Create or update `.env` in the project root:
+
+```env
 DB_HOST=localhost
 DB_USER=root
 DB_PASSWORD=flow
 DB_NAME=flow_db
 
-### Verify Connection
+MONGO_URI=mongodb://localhost:27017/
+MONGO_DB_NAME=flow_db
+
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+```
+
+Use the credentials that match the local MySQL setup.
+
+### 4. Load the SQL Schema
+
+```bash
+mysql -u root -p < database/schema.sql
+```
+
+### 5. Verify Database Connection
 
 ```bash
 python3 test_connection.py
 ```
 
-You should see: `Connection successful!`
-
-### Run the App
+### 6. Run the Full App
 
 ```bash
 python3 main.py
 ```
 
+`main.py` will:
+
+1. Start the Flask customer website on port `5001`
+2. Seed branches, menu items, inventory, suppliers, schedules, and demo accounts when needed
+3. Open the Tkinter login screen
+
+If port `5001` is already in use, stop the old Flask process and run `main.py` again.
+
+---
+
+## Demo Login Accounts
+
+The app seeds these demo accounts if they are missing:
+
+| Role | Username | Password |
+|---|---|---|
+| Staff | `Staff` | `123` |
+| Manager | `Manager` | `123` |
+| Admin/HQ | `Admin` | `123` |
+
+---
+
+## Demo Walkthrough
+
+Use this path to demonstrate the scenario end-to-end:
+
+1. Open the customer web UI at `http://127.0.0.1:5001`
+2. Browse menu categories and items
+3. Submit a reservation for today
+4. Login as Staff and confirm the reservation appears in POS
+5. Accept or cancel the reservation to clear it from the POS list
+6. Place an online customer order
+7. Confirm the order appears in Staff POS and Kitchen Board
+8. Complete the order from the POS/Kitchen workflow
+9. Create an in-restaurant table order from Staff POS
+10. Send the table order to the kitchen and complete payment
+11. Login as Manager and show inventory
+12. Place another order and show inventory decrement/low-stock behavior
+13. Show Manager suppliers, staff scheduling, menu management, and reports
+14. Login as Admin and show branches, users/roles, branch comparison, reviews, and clickstream analytics
+
+---
+
+## Scenario Requirement Checklist
+
+| Requirement | Status |
+|---|---|
+| POS & billing | Implemented |
+| Inventory & supplier management | Implemented |
+| Workforce scheduling | Implemented |
+| Customer experience analytics | Implemented |
+| Branch performance comparison | Implemented |
+| Customer UI: menu, reservations, feedback | Implemented |
+| Staff UI: orders, tables, kitchen status | Implemented |
+| Manager UI: inventory, suppliers, scheduling | Implemented |
+| Admin UI: branch setup, users/roles, analytics | Implemented |
+| Order & POS Service | Implemented |
+| Reservation Service | Implemented |
+| Inventory decrement + reorder alerts | Implemented |
+| Supplier/Procurement Service | Implemented |
+| Feedback & Sentiment Service | Implemented |
+| Reporting: sales by hour, food cost, trends | Implemented |
+| SQL operational data | Implemented |
+| NoSQL reviews/sentiment/clickstream | Implemented |
+
+---
+
+## Notes on Data Behavior
+
+- Customer and POS menu data use the SQL `menu_item` table.
+- Online orders create SQL `orders`, `order_item`, and `payment` records.
+- Inventory decrements through menu item ingredient mappings.
+- Reviews are stored in SQL and mirrored into MongoDB for analytics.
+- Clickstream events are stored in MongoDB when customers browse the menu.
+- Manager food cost reports use SQL order/item/ingredient/inventory data.
+- Payroll data is shown through processed payroll records and shift-based payroll summaries.
+
+---
+
+## AI Usage
+
+AI tools were used during development. ChatGPT and Claude helped with:
+
+- Debugging Flask reservation and order endpoint issues
+- Auditing scenario requirements against the implemented code
+- Updating backend functions for inventory decrement, reporting, and food cost calculations
+- Improving customer web form behavior and JSON API submission
+- Fixing Tkinter UI issues, including button visibility and POS window behavior
+- Reviewing frontend/backend data flow across Customer, Staff, Manager, and Admin interfaces
+- Formatting and cleaning project documentation
+- Creating and improving the simulation/seed script used to populate demo activity
+- Generating implementation suggestions, test commands, and demo walkthrough checklists
+
+Code updates were reviewed and adapted to fit the project structure, database schema, and demo requirements.
+
 ---
 
 ## Current Status
 
-FLOW is currently in active development as part of CSC 570 Milestone 6. The database schema and connection layer are complete. Backend query modules and Tkinter frontend interfaces are currently being developed and will be connected to the live MySQL database for the final presentation.
+FLOW is demo-ready for the CSC 570 restaurant chain operations scenario. The system demonstrates a hybrid SQL/NoSQL restaurant management platform with customer ordering, staff POS, manager operations, and HQ analytics.

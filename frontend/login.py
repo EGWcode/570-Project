@@ -1,5 +1,5 @@
 # login.py
-#Created by Jonah Goodwine
+# Created by Jonah Goodwine
 #     FLOW - Enterprise Restaurant Management System
 #
 # This file is the login screen for the FLOW system. The user enters one
@@ -18,6 +18,46 @@ import sys
 import tkinter as tk
 import webbrowser
 from tkinter import ttk
+
+# ── macOS: native tk.Button ignores bg/fg; replace with Frame+Label ───────────
+import platform as _platform
+if _platform.system() == "Darwin":
+    _TkFrame, _TkLabel = tk.Frame, tk.Label
+    class _ColorButton(_TkFrame):
+        def __init__(self, parent, text="", command=None,
+                     bg="#1C2128", fg="#E6EDF3",
+                     font=("Segoe UI", 10, "bold"),
+                     padx=8, pady=5, cursor="hand2",
+                     width=None, **_ignored):
+            super().__init__(parent, bg=bg, cursor=cursor)
+            kw = dict(text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady, cursor=cursor)
+            if width is not None:
+                kw["width"] = width
+            self._lbl = _TkLabel(self, **kw)
+            self._lbl.pack(fill="both", expand=True)
+            if command:
+                self._attach_cmd(command)
+        def _attach_cmd(self, cmd):
+            self._lbl.unbind("<Button-1>")
+            self.unbind("<Button-1>")
+            self._lbl.bind("<Button-1>", lambda e: cmd())
+            self.bind("<Button-1>", lambda e: cmd())
+        def config(self, bg=None, fg=None, text=None,
+                   cursor=None, command=None, **_ignored):
+            if bg is not None:
+                _TkFrame.config(self, bg=bg); self._lbl.config(bg=bg)
+            if fg is not None:
+                self._lbl.config(fg=fg)
+            if text is not None:
+                self._lbl.config(text=text)
+            if cursor is not None:
+                _TkFrame.config(self, cursor=cursor); self._lbl.config(cursor=cursor)
+            if command is not None:
+                self._attach_cmd(command)
+        configure = config
+    tk.Button = _ColorButton
+del _platform
+# ──────────────────────────────────────────────────────────────────────────────
 
 # project root on path so backend.* and config.* imports resolve
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -72,10 +112,10 @@ class PlaceholderEnv(tk.Tk):
                  font=("Segoe UI", 36, "bold")).pack(expand=True)
 
         # small hint underneath
-        tk.Label(self, text="placeholder screen -- real UI not loaded",
+        tk.Label(self, text="Screen unavailable",
                  bg="#000000", fg="#FFFFFF",
                  font=("Segoe UI", 10)).pack(pady=(0, 6))
-        tk.Label(self, text="check console output for the import error",
+        tk.Label(self, text="Please return to login and try again.",
                  bg="#000000", fg="#888888",
                  font=("Segoe UI", 9)).pack(pady=(0, 30))
 
@@ -259,9 +299,11 @@ class LoginScreen(tk.Tk):
 
 
     def open_customer_ui(self):
-        """Opens the browser-based customer ordering screen."""
-        self.destroy()
+        """Opens the browser-based customer ordering screen without closing login."""
         webbrowser.open("http://127.0.0.1:5001")
+        self.status_label.config(text="Customer website opened. Login remains available here.", fg=MUTED)
+        self.lift()
+        self.focus_force()
 
     # closes the login window and tries to launch the matching UI for
     # the role. if the import or launch fails, drop into the black
@@ -274,7 +316,7 @@ class LoginScreen(tk.Tk):
         if role == "Manager":
             try:
                 from manager_ui import ManagerUI
-                app = ManagerUI(manager_name="Manager", branch_id=1)
+                app = ManagerUI(manager_name="Maya Bennett", branch_id=1)
                 app.mainloop()
                 launched = True
             except Exception as e:
@@ -291,8 +333,8 @@ class LoginScreen(tk.Tk):
 
         elif role == "Admin":
             try:
-                from HQ_ui import HQApp
-                app = HQApp()
+                from HQ_ui import HQDashboard
+                app = HQDashboard()
                 app.mainloop()
                 launched = True
             except Exception as e:

@@ -62,7 +62,8 @@ def get_shifts_by_branch(branch_id):
         cursor.execute("""
             SELECT s.shift_id, s.shift_date, s.start_time,
                    s.end_time, s.role_assigned,
-                   p.first_name, p.last_name, p.person_id
+                   p.first_name, p.last_name, p.person_id,
+                   CONCAT(p.first_name, ' ', p.last_name) AS employee_name
             FROM shift_schedule s
             JOIN person p ON s.person_id = p.person_id
             WHERE s.branch_id = %s
@@ -89,7 +90,8 @@ def get_shifts_by_date(branch_id, date):
         cursor.execute("""
             SELECT s.shift_id, s.shift_date, s.start_time,
                    s.end_time, s.role_assigned,
-                   p.first_name, p.last_name, p.person_id
+                   p.first_name, p.last_name, p.person_id,
+                   CONCAT(p.first_name, ' ', p.last_name) AS employee_name
             FROM shift_schedule s
             JOIN person p ON s.person_id = p.person_id
             WHERE s.branch_id = %s AND s.shift_date = %s

@@ -24,29 +24,41 @@
 
 from config.db_config import get_connection, close_connection
 
+def _score_from_rating(rating):
+    """Basic sentiment score derived from star rating (-1.0 to 1.0)."""
+    mapping = {5: 1.0, 4: 0.5, 3: 0.0, 2: -0.5, 1: -1.0}
+    return mapping.get(int(rating), 0.0)
+
+
 def submit_review(person_id, branch_id, rating, comments=None):
     """
-    Submits a new customer review for a branch.
-    Sentiment score is null by default and can be updated
-    later by the analytics system using update_sentiment_score().
+    Submits a new customer review for a branch and immediately scores
+    sentiment based on the star rating (basic scoring as required).
     """
     conn = get_connection()
     if not conn:
         return False, "Database connection failed."
 
     cursor = conn.cursor()
+    sentiment = _score_from_rating(rating)
 
     try:
         cursor.execute("""
-            INSERT INTO review (person_id, branch_id, rating, comments)
-            VALUES (%s, %s, %s, %s)
-        """, (person_id, branch_id, rating, comments))
+            INSERT INTO review (person_id, branch_id, rating, comments, sentiment_score)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (person_id, branch_id, rating, comments, sentiment))
 
         conn.commit()
 
         try:
             from config.mongo_config import log_review
-            log_review(person_id, branch_id, rating, comments)
+            cursor2 = conn.cursor(dictionary=True)
+            cursor2.execute("SELECT branch_name FROM branch WHERE branch_id = %s", (branch_id,))
+            br = cursor2.fetchone()
+            cursor2.close()
+            log_review(person_id, branch_id, rating, comments,
+                       branch_name=br["branch_name"] if br else None,
+                       sentiment_score=sentiment)
         except Exception:
             pass
 
@@ -73,7 +85,7 @@ def get_reviews_by_branch(branch_id):
                    r.sentiment_score, r.created_at,
                    p.first_name, p.last_name
             FROM review r
-            JOIN person p ON r.person_id = p.person_id
+            LEFT JOIN person p ON r.person_id = p.person_id
             WHERE r.branch_id = %s
             ORDER BY r.created_at DESC
         """, (branch_id,))
@@ -152,7 +164,7 @@ def get_recent_reviews(branch_id, limit=10):
                    r.sentiment_score, r.created_at,
                    p.first_name, p.last_name
             FROM review r
-            JOIN person p ON r.person_id = p.person_id
+            LEFT JOIN person p ON r.person_id = p.person_id
             WHERE r.branch_id = %s
             ORDER BY r.created_at DESC
             LIMIT %s
@@ -181,7 +193,7 @@ def get_review_by_id(review_id):
                    p.first_name, p.last_name,
                    b.branch_name
             FROM review r
-            JOIN person p ON r.person_id = p.person_id
+            LEFT JOIN person p ON r.person_id = p.person_id
             JOIN branch b ON r.branch_id = b.branch_id
             WHERE r.review_id = %s
         """, (review_id,))

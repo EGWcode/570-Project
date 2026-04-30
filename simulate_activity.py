@@ -31,24 +31,21 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config.db_config import get_connection, close_connection
+from config.db_config import get_connection
 from config.redis_config import get_redis
 
-# ---------------------------------------------------------------------------
+# ______________________________________
 # Helpers
-# ---------------------------------------------------------------------------
+# ___________________________________
 
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-
 def money(value):
     return Decimal(str(value)).quantize(Decimal("0.01"))
 
-
 def qty(value):
     return Decimal(str(value)).quantize(Decimal("0.01"))
-
 
 def json_safe(value):
     if isinstance(value, Decimal):
@@ -80,14 +77,15 @@ def log(branch_name, message):
     print(f"[{branch_name}] {message}")
 
 
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 # Seed data
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 
 BRANCHES = [
-    {"name": "Soul by the Sea - Hampton", "address": "100 Settlers Landing Rd, Hampton, VA 23669", "phone": "757-555-0101"},
-    {"name": "Soul by the Sea - Norfolk", "address": "250 Waterside Dr, Norfolk, VA 23510",        "phone": "757-555-0202"},
-    {"name": "Soul by the Sea - Suffolk", "address": "780 N Main St, Suffolk, VA 23434",           "phone": "757-555-0303"},
+    {"name": "Soul by the Sea - Hampton",        "address": "100 Settlers Landing Rd, Hampton, VA 23669",    "phone": "757-555-0101"},
+    {"name": "Soul by the Sea - Norfolk",         "address": "250 Waterside Dr, Norfolk, VA 23510",          "phone": "757-555-0202"},
+    {"name": "Soul by the Sea - Suffolk",         "address": "780 N Main St, Suffolk, VA 23434",             "phone": "757-555-0303"},
+    {"name": "Soul by the Sea - Virginia Beach",  "address": "300 21st St, Virginia Beach, VA 23451",        "phone": "757-555-0404"},
 ]
 
 SUPPLIERS = [
@@ -217,6 +215,18 @@ INVENTORY_SEED = [
     {"name": "Cheesecake",       "unit": "EA",    "qty": 30,  "reorder":  8, "cost": 3.00},
     {"name": "Red Velvet Cake",  "unit": "EA",    "qty": 30,  "reorder":  8, "cost": 3.00},
     {"name": "Ice Cream",        "unit": "GAL",   "qty": 12,  "reorder":  3, "cost": 9.00},
+]
+
+# Demo-only stock setup. This does not change order or inventory decrement logic.
+# Set to False when you want normal seeded inventory quantities.
+DEMO_LOW_STOCK = True
+DEMO_LOW_STOCK_ITEMS = [
+    # Menu item demo path: Burger -> Ground Beef, 10 burgers consumes 5.00 LB.
+    {"inventory_name": "Ground Beef", "quantity_on_hand": 5.00},
+    # Menu item demo path: Chicken Wings -> Chicken Wings, 8 wings orders consumes 6.00 LB.
+    {"inventory_name": "Chicken Wings", "quantity_on_hand": 6.00},
+    # Menu item demo path: Shrimp Basket -> Gulf Shrimp, 10 baskets consumes 7.50 LB.
+    {"inventory_name": "Gulf Shrimp", "quantity_on_hand": 7.50},
 ]
 
 # maps menu item name -> inventory item name (ingredient relationship)
@@ -352,9 +362,9 @@ BRANCH_HOURS = [
 ]
 
 
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 # Seed
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 
 def column_exists(cur, table_name, column_name):
     cur.execute(
@@ -376,7 +386,7 @@ def ensure_runtime_schema(conn):
     updates = [
         ("menu_item", "tags", "ALTER TABLE menu_item ADD COLUMN tags VARCHAR(30) NULL"),
         ("orders", "notes", "ALTER TABLE orders ADD COLUMN notes VARCHAR(255) NULL"),
-        ("payment", "card_last4", "ALTER TABLE payment ADD COLUMN card_last4 VARCHAR(4) NULL AFTER payment_type"),
+        ("payment", "card_last4",      "ALTER TABLE payment ADD COLUMN card_last4 VARCHAR(4) NULL AFTER payment_type"),
         ("order_item", "special_instructions", "ALTER TABLE order_item ADD COLUMN special_instructions VARCHAR(120) NULL"),
     ]
     for table_name, column_name, sql in updates:
@@ -399,6 +409,40 @@ def ensure_runtime_schema(conn):
         cur.execute("ALTER TABLE inventory_item ADD UNIQUE KEY uq_inventory_branch_item (branch_id, item_name)")
     except Exception:
         pass
+
+    # Create payroll table if it doesn't exist yet
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS payroll (
+                payroll_id       INT AUTO_INCREMENT PRIMARY KEY,
+                person_id        INT NOT NULL,
+                branch_id        INT NOT NULL,
+                pay_period_start DATE NOT NULL,
+                pay_period_end   DATE NOT NULL,
+                hours_worked     DECIMAL(6,2) NOT NULL DEFAULT 0.00,
+                gross_pay        DECIMAL(10,2) NOT NULL,
+                deductions       DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                net_pay          DECIMAL(10,2) NOT NULL,
+                pay_date         DATE NOT NULL,
+                status           ENUM('PENDING','PROCESSED','PAID') NOT NULL DEFAULT 'PENDING',
+                created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT fk_payroll_employee
+                    FOREIGN KEY (person_id) REFERENCES employee(person_id)
+                    ON DELETE RESTRICT ON UPDATE CASCADE,
+                CONSTRAINT fk_payroll_branch
+                    FOREIGN KEY (branch_id) REFERENCES branch(branch_id)
+                    ON DELETE RESTRICT ON UPDATE CASCADE
+            )
+        """)
+    except Exception:
+        pass
+
+    # Add sentiment_score column to review if missing (older DBs)
+    if not column_exists(cur, "review", "sentiment_score"):
+        try:
+            cur.execute("ALTER TABLE review ADD COLUMN sentiment_score DECIMAL(3,2) NULL")
+        except Exception:
+            pass
 
     conn.commit()
     cur.close()
@@ -447,33 +491,35 @@ def seed_if_empty(conn):
     cleanup_duplicate_menu_items(conn)
     cur = conn.cursor(dictionary=True)
 
-    # ---- branches ----
-    cur.execute("SELECT COUNT(*) AS n FROM branch")
-    if cur.fetchone()["n"] == 0:
-        print("[SEED] Inserting branches...")
-        for b in BRANCHES:
-            cur.execute(
-                "INSERT INTO branch (branch_name, address, phone) VALUES (%s, %s, %s)",
-                (b["name"], b["address"], b["phone"])
-            )
-        conn.commit()
+    # ____ branches ____
+    print("[SEED] Syncing branches...")
+    for b in BRANCHES:
+        cur.execute(
+            """
+            INSERT INTO branch (branch_name, address, phone) VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE address = VALUES(address), phone = VALUES(phone)
+            """,
+            (b["name"], b["address"], b["phone"])
+        )
+    conn.commit()
 
     cur.execute("SELECT branch_id, branch_name FROM branch")
     branches = cur.fetchall()
 
-    # ---- branch hours ----
-    cur.execute("SELECT COUNT(*) AS n FROM branch_hours")
-    if cur.fetchone()["n"] == 0:
-        print("[SEED] Inserting branch hours...")
-        for br in branches:
-            for day, open_t, close_t in BRANCH_HOURS:
-                cur.execute(
-                    "INSERT INTO branch_hours (branch_id, day_of_week, open_time, close_time) VALUES (%s,%s,%s,%s)",
-                    (br["branch_id"], day, open_t, close_t)
-                )
-        conn.commit()
+    # ____ branch hours ____
+    for br in branches:
+        for day, open_t, close_t in BRANCH_HOURS:
+            cur.execute(
+                """
+                INSERT INTO branch_hours (branch_id, day_of_week, open_time, close_time)
+                VALUES (%s,%s,%s,%s)
+                ON DUPLICATE KEY UPDATE open_time = VALUES(open_time), close_time = VALUES(close_time)
+                """,
+                (br["branch_id"], day, open_t, close_t)
+            )
+    conn.commit()
 
-    # ---- suppliers ----
+    # ____ suppliers ____
     cur.execute("SELECT COUNT(*) AS n FROM supplier")
     if cur.fetchone()["n"] == 0:
         print("[SEED] Inserting suppliers...")
@@ -488,7 +534,7 @@ def seed_if_empty(conn):
     supplier_row = cur.fetchone()
     default_supplier = supplier_row["supplier_id"] if supplier_row else None
 
-    # ---- persons / managers per branch ----
+    # ____ persons / managers per branch ____
     cur.execute("SELECT COUNT(*) AS n FROM person")
     if cur.fetchone()["n"] == 0:
         print("[SEED] Inserting persons, employees, managers, staff...")
@@ -540,7 +586,7 @@ def seed_if_empty(conn):
                 )
         conn.commit()
 
-    # ---- menu items ----
+    # ____ menu items ____
     cur.execute("SELECT COUNT(*) AS n FROM menu_item")
     menu_count = cur.fetchone()["n"]
     if menu_count < len(MENU_ITEMS):
@@ -561,7 +607,7 @@ def seed_if_empty(conn):
             )
         conn.commit()
 
-    # ---- inventory (per branch) ----
+    # ____ inventory (per branch) ____
     expected_inventory_count = len(branches) * len(INVENTORY_SEED)
     cur.execute("SELECT COUNT(*) AS n FROM inventory_item")
     inventory_count = cur.fetchone()["n"]
@@ -597,7 +643,7 @@ def seed_if_empty(conn):
                 )
         conn.commit()
 
-    # ---- menu_item_ingredient ----
+    # ____ menu_item_ingredient ____
     cur.execute("SELECT COUNT(*) AS n FROM menu_item_ingredient")
     ingredient_count = cur.fetchone()["n"]
     if ingredient_count < len(INGREDIENT_MAP):
@@ -622,14 +668,28 @@ def seed_if_empty(conn):
                 )
         conn.commit()
 
+    if DEMO_LOW_STOCK:
+        print("[SEED] Applying demo low-stock inventory for Hampton...")
+        for item in DEMO_LOW_STOCK_ITEMS:
+            cur.execute(
+                """
+                UPDATE inventory_item
+                SET quantity_on_hand = %s
+                WHERE branch_id = 1
+                  AND item_name = %s
+                """,
+                (item["quantity_on_hand"], item["inventory_name"]),
+            )
+        conn.commit()
+
     cur.close()
     print("[SEED] Database ready.")
     return branches
 
 
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 # Simulation helpers — fetch live IDs from the DB
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 
 def get_branches(conn):
     cur = conn.cursor(dictionary=True)
@@ -668,6 +728,29 @@ def get_inventory_item(conn, branch_id, item_name):
     row = cur.fetchone()
     cur.close()
     return row
+
+
+def get_active_shifts(conn, branch_id):
+    """Returns list of (person_id, name, role) for staff whose shift is active right now."""
+    cur = conn.cursor(dictionary=True)
+    now = datetime.now()
+    cur.execute(
+        """
+        SELECT s.person_id, p.first_name, p.last_name,
+               st.role, s.start_time, s.end_time
+        FROM shift_schedule s
+        JOIN person p ON p.person_id = s.person_id
+        LEFT JOIN staff st ON st.person_id = s.person_id
+        WHERE s.branch_id = %s
+          AND s.shift_date = %s
+          AND s.end_time > %s
+        ORDER BY s.start_time
+        """,
+        (branch_id, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"))
+    )
+    rows = cur.fetchall()
+    cur.close()
+    return rows
 
 
 def get_confirmed_reservations(conn, branch_id):
@@ -711,9 +794,9 @@ def random_person_name():
     return random.choice(FIRST_NAMES), random.choice(LAST_NAMES)
 
 
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 # Simulation actions
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 
 def action_new_reservation(conn, branch):
     """Insert a CONFIRMED reservation for a new or existing person."""
@@ -932,6 +1015,80 @@ def action_complete_order(conn, branch):
     })
 
 
+def action_assign_shift(conn, branch):
+    """Clock a staff member in for a shift. Multiple staff can be on shift simultaneously."""
+    cur = conn.cursor(dictionary=True)
+    bid   = branch["branch_id"]
+    bname = branch["branch_name"]
+
+    all_staff = get_staff_for_branch(conn, bid)
+    if not all_staff:
+        cur.close()
+        return
+
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+
+    # find who is already scheduled today so we prefer unscheduled staff first
+    cur.execute(
+        "SELECT DISTINCT person_id FROM shift_schedule WHERE branch_id = %s AND shift_date = %s",
+        (bid, today)
+    )
+    already_scheduled = {r["person_id"] for r in cur.fetchall()}
+    available = [pid for pid in all_staff if pid not in already_scheduled] or all_staff
+
+    person_id = random.choice(available)
+
+    # get name and role
+    cur.execute(
+        "SELECT p.first_name, p.last_name, st.role "
+        "FROM person p LEFT JOIN staff st ON st.person_id = p.person_id "
+        "WHERE p.person_id = %s",
+        (person_id,)
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        return
+    name = f"{row['first_name']} {row['last_name']}"
+    role = row["role"] or "Manager"
+
+    # 6-8 hour shift; cap end_time at 23:59 to satisfy the CHECK constraint
+    shift_hours = random.randint(6, 8)
+    end_dt  = now + timedelta(hours=shift_hours)
+    max_end = now.replace(hour=23, minute=59, second=0, microsecond=0)
+    if end_dt > max_end:
+        end_dt = max_end
+    if end_dt <= now + timedelta(hours=1):
+        cur.close()
+        return
+
+    start_time = now.strftime("%H:%M:%S")
+    end_time   = end_dt.strftime("%H:%M:%S")
+
+    cur.execute(
+        "INSERT INTO shift_schedule (person_id, branch_id, shift_date, start_time, end_time, role_assigned) "
+        "VALUES (%s,%s,%s,%s,%s,%s)",
+        (person_id, bid, today, start_time, end_time, role)
+    )
+    conn.commit()
+
+    # count how many staff are NOW active (including this new shift)
+    active = get_active_shifts(conn, bid)
+    active_count = len(active)
+    cur.close()
+
+    log(bname,
+        f"Staff Clocked In — {name} ({role}) | "
+        f"Shift: {now.strftime('%I:%M %p')} – {end_dt.strftime('%I:%M %p')} | "
+        f"{active_count} staff currently on shift")
+    publish("flow:orders", "staff_clock_in", bid, bname, person_id, {
+        "name": name, "role": role,
+        "start_time": start_time, "end_time": end_time,
+        "staff_on_shift": active_count,
+    })
+
+
 def action_new_review(conn, branch):
     """Insert a customer review for this branch."""
     cur = conn.cursor()
@@ -956,9 +1113,9 @@ def action_new_review(conn, branch):
     })
 
 
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 # Main simulation loop
-# ---------------------------------------------------------------------------
+# ___________________________________________________________________________
 
 ACTIONS = [
     ("new_reservation",  action_new_reservation,  2),
@@ -966,6 +1123,7 @@ ACTIONS = [
     ("create_order",     action_create_order,      5),
     ("complete_order",   action_complete_order,    4),
     ("new_review",       action_new_review,        1),
+    ("assign_shift",     action_assign_shift,      2),
 ]
 
 # weighted pool so common actions fire more often

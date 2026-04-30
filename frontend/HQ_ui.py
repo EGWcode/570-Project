@@ -26,9 +26,55 @@
 #     Redis    live event feed (new_order, inventory_low, new_review, etc.)
 
 
+import os
+import sys
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date, datetime
+
+# ── macOS: native tk.Button ignores bg/fg; replace with Frame+Label ───────────
+import platform as _platform
+if _platform.system() == "Darwin":
+    _TkFrame, _TkLabel = tk.Frame, tk.Label
+    class _ColorButton(_TkFrame):
+        def __init__(self, parent, text="", command=None,
+                     bg="#1C2128", fg="#E6EDF3",
+                     font=("Segoe UI", 10, "bold"),
+                     padx=8, pady=5, cursor="hand2",
+                     width=None, **_ignored):
+            super().__init__(parent, bg=bg, cursor=cursor)
+            kw = dict(text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady, cursor=cursor)
+            if width is not None:
+                kw["width"] = width
+            self._lbl = _TkLabel(self, **kw)
+            self._lbl.pack(fill="both", expand=True)
+            if command:
+                self._attach_cmd(command)
+        def _attach_cmd(self, cmd):
+            self._lbl.unbind("<Button-1>")
+            self.unbind("<Button-1>")
+            self._lbl.bind("<Button-1>", lambda e: cmd())
+            self.bind("<Button-1>", lambda e: cmd())
+        def config(self, bg=None, fg=None, text=None,
+                   cursor=None, command=None, **_ignored):
+            if bg is not None:
+                _TkFrame.config(self, bg=bg); self._lbl.config(bg=bg)
+            if fg is not None:
+                self._lbl.config(fg=fg)
+            if text is not None:
+                self._lbl.config(text=text)
+            if cursor is not None:
+                _TkFrame.config(self, cursor=cursor); self._lbl.config(cursor=cursor)
+            if command is not None:
+                self._attach_cmd(command)
+        configure = config
+    tk.Button = _ColorButton
+del _platform
+# ──────────────────────────────────────────────────────────────────────────────
 import json
 import random
 
@@ -39,6 +85,13 @@ try:
     MYSQL_AVAILABLE = True
 except Exception:
     MYSQL_AVAILABLE = False
+
+try:
+    from backend.auth import register_user
+    from backend.employee import update_employee_status
+    HQ_BACKEND = True
+except Exception:
+    HQ_BACKEND = False
 
 # try Redis for the live activity feed
 try:
@@ -202,7 +255,7 @@ class HQDashboard(tk.Tk):
         # sidebar tab buttons -- nine total
         tab_labels = ["Dashboard", "Branches", "Employees", "Orders",
                       "Reservations", "Inventory", "Reviews", "Staffing",
-                      "Analytics"]
+                      "Analytics", "Clickstream"]
         self.tab_buttons = {}
         for label in tab_labels:
             btn = tk.Button(self.sidebar, text=label, bg=BG_PANEL, fg=TEXT,
@@ -261,6 +314,7 @@ class HQDashboard(tk.Tk):
         elif tab_name == "Reviews":      self.build_reviews_view()
         elif tab_name == "Staffing":     self.build_staffing_view()
         elif tab_name == "Analytics":    self.build_analytics_view()
+        elif tab_name == "Clickstream":  self.build_clickstream_view()
 
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -841,9 +895,43 @@ class HQDashboard(tk.Tk):
 
 
     def add_branch_stub(self):
-        messagebox.showinfo("Add Branch",
-                            "Branch creation form not built yet.\n"
-                            "Will hook into INSERT INTO branch.")
+        win = self._hq_dialog("Add Branch", 420, 320)
+        f = tk.Frame(win, bg=BG_PANEL)
+        f.pack(fill="both", expand=True)
+        f.columnconfigure(1, weight=1)
+
+        name_e  = self._hq_field(f, "Branch Name *", 0)
+        addr_e  = self._hq_field(f, "Address", 1)
+        phone_e = self._hq_field(f, "Phone", 2)
+
+        def submit():
+            name = name_e.get().strip()
+            if not name:
+                messagebox.showerror("Missing Field", "Branch name is required.", parent=win)
+                return
+            try:
+                from config.db_config import get_connection as _get_conn
+                conn = _get_conn()
+                if conn is None:
+                    messagebox.showerror("DB Error", "Could not connect to database.", parent=win)
+                    return
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT INTO branch (branch_name, address, phone) VALUES (%s, %s, %s)",
+                    (name, addr_e.get().strip() or None, phone_e.get().strip() or None),
+                )
+                conn.commit()
+                cur.close()
+                conn.close()
+                messagebox.showinfo("Branch Added", f'"{name}" was added successfully.', parent=win)
+                win.destroy()
+                self.show_tab("Branches")
+            except Exception as exc:
+                messagebox.showerror("Add Branch Failed", str(exc), parent=win)
+
+        tk.Button(win, text="Create Branch", bg="#0F2419", fg=GREEN,
+                  font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2",
+                  command=submit).pack(fill="x", padx=14, pady=(14, 4))
 
 
     def load_branches(self):
@@ -896,10 +984,19 @@ class HQDashboard(tk.Tk):
                   font=("Segoe UI", 9), cursor="hand2",
                   command=lambda: self.show_tab("Employees")
                   ).pack(side="right", padx=4, ipadx=8, ipady=4)
+        tk.Button(head, text="Change Role", bg=BG_PANEL, fg=TEXT, relief="flat",
+                  font=("Segoe UI", 9), cursor="hand2",
+                  command=self._hq_change_role_dialog
+                  ).pack(side="right", padx=4, ipadx=8, ipady=4)
+        tk.Button(head, text="Add User", bg=BG_PANEL, fg=GOLD, relief="flat",
+                  font=("Segoe UI", 9, "bold"), cursor="hand2",
+                  command=self._hq_add_user_dialog
+                  ).pack(side="right", padx=4, ipadx=8, ipady=4)
 
         cols = ("id", "name", "branch", "title", "status", "hire_date")
         tree = ttk.Treeview(self.content_frame, columns=cols, show="headings",
                             style="Flow.Treeview", height=18)
+        self._hq_emp_tree = tree
         col_setup = [
             ("id",        "ID",         60),
             ("name",      "Name",       200),
@@ -982,6 +1079,157 @@ class HQDashboard(tk.Tk):
             ]
         return rows
 
+
+    def _hq_dialog(self, title, width=460, height=500):
+        win = tk.Toplevel(self)
+        win.title(title)
+        win.configure(bg=BG_PANEL)
+        win.geometry(f"{width}x{height}")
+        win.resizable(False, False)
+        win.grab_set()
+        return win
+
+    def _hq_field(self, parent, label, row, show=None):
+        tk.Label(parent, text=label, bg=BG_PANEL, fg=TEXT,
+                 font=("Segoe UI", 10)).grid(row=row, column=0, sticky="w", padx=14, pady=(8,2))
+        v = tk.StringVar()
+        e = tk.Entry(parent, textvariable=v, bg=BG_DARK, fg=TEXT, insertbackground=TEXT,
+                     relief="flat", font=("Segoe UI", 11), width=28, show=show or "")
+        e.grid(row=row, column=1, sticky="ew", padx=(4,14), pady=(8,2))
+        return e
+
+    def _hq_add_user_dialog(self):
+        """Admin creates a new employee login account across any branch."""
+        if not MYSQL_AVAILABLE:
+            messagebox.showerror("Unavailable", "Database not connected.")
+            return
+
+        win = self._hq_dialog("Add User Account", 480, 580)
+        f = tk.Frame(win, bg=BG_PANEL)
+        f.pack(fill="both", expand=True)
+        f.columnconfigure(1, weight=1)
+
+        first_e  = self._hq_field(f, "First Name *",  0)
+        last_e   = self._hq_field(f, "Last Name *",   1)
+        email_e  = self._hq_field(f, "Email *",       2)
+        user_e   = self._hq_field(f, "Username *",    3)
+        pass_e   = self._hq_field(f, "Password *",    4, show="*")
+        title_e  = self._hq_field(f, "Job Title *",   5)
+
+        tk.Label(f, text="Role *", bg=BG_PANEL, fg=TEXT,
+                 font=("Segoe UI", 10)).grid(row=6, column=0, sticky="w", padx=14, pady=(8,2))
+        role_v = tk.StringVar(value="STAFF")
+        ttk.Combobox(f, textvariable=role_v, values=["STAFF","MANAGER","ADMIN"],
+                     state="readonly", width=26).grid(row=6, column=1, sticky="ew", padx=(4,14), pady=(8,2))
+
+        tk.Label(f, text="Branch ID *", bg=BG_PANEL, fg=TEXT,
+                 font=("Segoe UI", 10)).grid(row=7, column=0, sticky="w", padx=14, pady=(8,2))
+        branch_v = tk.StringVar(value="1")
+        branches = []
+        try:
+            conn = get_connection()
+            cur = conn.cursor(dictionary=True)
+            cur.execute("SELECT branch_id, branch_name FROM branch ORDER BY branch_id")
+            branches = cur.fetchall()
+            cur.close(); conn.close()
+        except Exception:
+            pass
+        branch_names = [f"{b['branch_id']} — {b['branch_name']}" for b in branches] or ["1 — Branch 1"]
+        branch_map   = {f"{b['branch_id']} — {b['branch_name']}": b["branch_id"] for b in branches} if branches else {"1 — Branch 1": 1}
+        ttk.Combobox(f, textvariable=branch_v, values=branch_names,
+                     state="readonly", width=26).grid(row=7, column=1, sticky="ew", padx=(4,14), pady=(8,2))
+        if branch_names:
+            branch_v.set(branch_names[0])
+
+        pay_e = self._hq_field(f, "Hourly Rate (Staff)\nor Salary (Mgr/Admin)", 8)
+
+        def submit():
+            first = first_e.get().strip(); last = last_e.get().strip()
+            email = email_e.get().strip(); username = user_e.get().strip()
+            password = pass_e.get().strip(); title = title_e.get().strip()
+            role  = role_v.get()
+            bid   = branch_map.get(branch_v.get(), 1)
+            if not all([first, last, email, username, password, title]):
+                messagebox.showerror("Missing Fields", "All starred fields are required.", parent=win)
+                return
+            try:
+                pay = float(pay_e.get())
+            except ValueError:
+                messagebox.showerror("Error", "Pay must be a number.", parent=win); return
+            hourly = pay if role == "STAFF" else None
+            salary = pay if role in ("MANAGER", "ADMIN") else None
+            ok, msg = register_user(
+                first_name=first, last_name=last, email=email,
+                phone=None, username=username, password=password, role=role,
+                branch_id=bid, job_title=title,
+                hourly_rate=hourly, salary=salary,
+            )
+            if ok:
+                messagebox.showinfo("Created", f"Account created.\nUsername: {username}  Role: {role}", parent=win)
+                win.destroy()
+                self.show_tab("Employees")
+            else:
+                messagebox.showerror("Error", msg, parent=win)
+
+        tk.Button(win, text="Create Account", bg="#0F2419", fg=GREEN,
+                  font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2",
+                  command=submit).pack(fill="x", padx=14, pady=(14,4))
+
+    def _hq_change_role_dialog(self):
+        """Admin changes the login role of a selected employee."""
+        tree = getattr(self, "_hq_emp_tree", None)
+        if tree is None or not tree.selection():
+            messagebox.showinfo("Select Row", "Select an employee row first.")
+            return
+        row = tree.item(tree.selection()[0], "values")
+        person_id = int(row[0]); emp_name = row[1]
+
+        if not MYSQL_AVAILABLE:
+            messagebox.showerror("Unavailable", "Database not connected.")
+            return
+
+        # look up existing role
+        cur_role = "STAFF"
+        try:
+            conn = get_connection()
+            cur = conn.cursor(dictionary=True)
+            cur.execute("SELECT role FROM user_account WHERE person_id = %s", (person_id,))
+            ua = cur.fetchone()
+            if ua:
+                cur_role = ua["role"]
+            cur.close(); conn.close()
+        except Exception:
+            pass
+
+        win = self._hq_dialog("Change Role", 360, 230)
+        f = tk.Frame(win, bg=BG_PANEL)
+        f.pack(fill="both", expand=True, padx=14, pady=14)
+        tk.Label(f, text=emp_name, bg=BG_PANEL, fg=GOLD,
+                 font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        tk.Label(f, text=f"Current role: {cur_role}", bg=BG_PANEL, fg=MUTED,
+                 font=("Segoe UI", 10)).pack(anchor="w", pady=(4,12))
+        role_v = tk.StringVar(value=cur_role)
+        ttk.Combobox(f, textvariable=role_v, values=["STAFF","MANAGER","ADMIN"],
+                     state="readonly", font=("Segoe UI", 11)).pack(fill="x", pady=(0,12))
+
+        def submit():
+            new_role = role_v.get()
+            try:
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("UPDATE user_account SET role = %s WHERE person_id = %s",
+                            (new_role, person_id))
+                conn.commit()
+                cur.close(); conn.close()
+                messagebox.showinfo("Updated", f"Role changed to {new_role}.", parent=win)
+                win.destroy()
+                self.show_tab("Employees")
+            except Exception as e:
+                messagebox.showerror("Error", str(e), parent=win)
+
+        tk.Button(win, text="Update Role", bg="#0F2419", fg=GREEN,
+                  font=("Segoe UI", 11, "bold"), relief="flat", cursor="hand2",
+                  command=submit).pack(fill="x", pady=4)
 
     # ══════════════════════════════════════════════════════════════════════════
     # 4.  ORDERS TAB  (HQ spec section 4)
@@ -1690,6 +1938,91 @@ class HQDashboard(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
     # SIGN OUT
     # ══════════════════════════════════════════════════════════════════════════
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # CLICKSTREAM TAB  — menu browsing analytics from MongoDB
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def build_clickstream_view(self):
+        head = tk.Frame(self.content_frame, bg=BG_DARK)
+        head.pack(fill="x", pady=(0, 14))
+        tk.Label(head, text="Clickstream Analytics", bg=BG_DARK, fg=TEXT,
+                 font=("Segoe UI", 18, "bold")).pack(side="left")
+        tk.Label(head, text="·  menu browsing behavior",
+                 bg=BG_DARK, fg=MUTED, font=("Segoe UI", 9, "italic")).pack(side="left", padx=8, pady=(8,0))
+        tk.Button(head, text="Refresh", bg=BG_PANEL, fg=TEXT, relief="flat",
+                  font=("Segoe UI", 9), cursor="hand2",
+                  command=lambda: self.show_tab("Clickstream")).pack(side="right", ipadx=8, ipady=4)
+
+        # ── load data from MongoDB ──────────────────────────────────────────
+        events = []
+        if MONGO_AVAILABLE:
+            try:
+                client = MongoClient("mongodb://localhost:27017/", serverSelectionTimeoutMS=2000)
+                db = client["flow_db"]
+                cursor = db.clickstream.find(
+                    {"event_type": "menu_view"},
+                    {"_id": 0, "category": 1, "items_viewed": 1, "item_count": 1, "timestamp": 1}
+                ).sort("timestamp", -1).limit(500)
+                events = list(cursor)
+            except Exception as e:
+                print(f"[HQ] Clickstream load error: {e}")
+
+        if not events:
+            tk.Label(self.content_frame,
+                     text="No clickstream data yet.\nBrowse the customer menu at http://127.0.0.1:5001 to generate events.",
+                     bg=BG_DARK, fg=MUTED, font=("Segoe UI", 12), justify="center").pack(expand=True)
+            return
+
+        # ── Category breakdown ──────────────────────────────────────────────
+        cat_counts = {}
+        item_counts = {}
+        for ev in events:
+            cat = ev.get("category") or "Unknown"
+            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+            for item in (ev.get("items_viewed") or []):
+                name = item.get("name") or "?"
+                item_counts[name] = item_counts.get(name, 0) + 1
+
+        tk.Label(self.content_frame, text="Category Browse Frequency",
+                 bg=BG_DARK, fg=TEXT, font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0,6))
+
+        bar_frame = tk.Frame(self.content_frame, bg=BG_DARK)
+        bar_frame.pack(fill="x", pady=(0, 18))
+        max_cat = max(cat_counts.values()) if cat_counts else 1
+        for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1]):
+            row = tk.Frame(bar_frame, bg=BG_DARK)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=cat, bg=BG_DARK, fg=MUTED, font=("Segoe UI", 9),
+                     width=18, anchor="w").pack(side="left")
+            bar_w = max(4, int((cnt / max_cat) * 300))
+            tk.Frame(row, bg=GOLD, height=16, width=bar_w).pack(side="left")
+            tk.Label(row, text=f"  {cnt} views", bg=BG_DARK, fg=TEXT,
+                     font=("Segoe UI", 9)).pack(side="left")
+
+        # ── Top browsed items ───────────────────────────────────────────────
+        tk.Label(self.content_frame, text="Most Viewed Menu Items",
+                 bg=BG_DARK, fg=TEXT, font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0,6))
+
+        cols = ("item", "views")
+        tree_f = tk.Frame(self.content_frame, bg=BG_DARK)
+        tree_f.pack(fill="both", expand=True)
+        sb = ttk.Scrollbar(tree_f, orient="vertical")
+        sb.pack(side="right", fill="y")
+        tree = ttk.Treeview(tree_f, columns=cols, show="headings",
+                            style="Flow.Treeview", height=12, yscrollcommand=sb.set)
+        sb.config(command=tree.yview)
+        tree.pack(fill="both", expand=True)
+        tree.heading("item",  text="Menu Item")
+        tree.heading("views", text="Times Viewed")
+        tree.column("item",  width=300, anchor="w")
+        tree.column("views", width=120, anchor="center")
+        for name, cnt in sorted(item_counts.items(), key=lambda x: -x[1])[:50]:
+            tree.insert("", "end", values=(name, cnt))
+
+        tk.Label(self.content_frame,
+                 text=f"{len(events)} browse events recorded  ·  {len(item_counts)} unique items seen",
+                 bg=BG_DARK, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(8,0))
 
     def sign_out(self):
         if not messagebox.askyesno("Sign Out", "Sign out of FLOW?"):

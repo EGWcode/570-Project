@@ -14,7 +14,7 @@ orders.py
    - add_order_item()        : adds a menu item to an existing order
    - get_order_items()       : retrieves all items for a specific order
    - update_order_status()   : updates the status of an order
-   - get_active_orders()     : retrieves all active orders for a branch
+   - get_active_orders()     : retrieves active kitchen/POS orders
    - get_order_by_id()       : retrieves a single order by order_id
    - get_orders_by_party()   : retrieves all orders for a specific party
    - calculate_order_total() : calculates subtotal, tax, and total for an order
@@ -195,7 +195,7 @@ def update_order_status(order_id, status):
         close_connection(conn, cursor)
 
 def get_active_orders(branch_id=None):
-    """Retrieves all active in-progress orders, optionally filtered by branch."""
+    """Retrieves active kitchen/POS orders, optionally filtered by branch."""
     conn = get_connection()
     if not conn:
         return []
@@ -217,7 +217,7 @@ def get_active_orders(branch_id=None):
             LEFT JOIN branch b ON o.branch_id = b.branch_id
             LEFT JOIN employee e ON o.employee_id = e.person_id
             LEFT JOIN person p ON e.person_id = p.person_id
-            WHERE o.order_status = 'IN_PROGRESS'
+            WHERE o.order_status IN ('IN_PROGRESS', 'SERVED')
               {branch_filter}
             ORDER BY o.order_datetime ASC
         """, params)
