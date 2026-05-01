@@ -49,17 +49,33 @@ def get_branch_summary(branch_id):
         cursor.execute("""
             SELECT
                 b.branch_id, b.branch_name, b.address, b.phone,
-                COUNT(DISTINCT o.order_id) as total_orders,
-                SUM(o.total_amount) as total_revenue,
-                COUNT(DISTINCT e.person_id) as total_employees,
-                ROUND(AVG(r.rating), 2) as average_rating
+                COALESCE(os.total_orders, 0) as total_orders,
+                COALESCE(os.total_revenue, 0) as total_revenue,
+                COALESCE(es.total_employees, 0) as total_employees,
+                rs.average_rating
             FROM branch b
-            LEFT JOIN orders o ON b.branch_id = o.branch_id
-            LEFT JOIN employee e ON b.branch_id = e.branch_id
-                AND e.employment_status = 'ACTIVE'
-            LEFT JOIN review r ON b.branch_id = r.branch_id
+            LEFT JOIN (
+                SELECT branch_id,
+                       COUNT(order_id) as total_orders,
+                       SUM(total_amount) as total_revenue
+                FROM orders
+                WHERE order_status = 'COMPLETED'
+                GROUP BY branch_id
+            ) os ON b.branch_id = os.branch_id
+            LEFT JOIN (
+                SELECT branch_id,
+                       COUNT(person_id) as total_employees
+                FROM employee
+                WHERE employment_status = 'ACTIVE'
+                GROUP BY branch_id
+            ) es ON b.branch_id = es.branch_id
+            LEFT JOIN (
+                SELECT branch_id,
+                       ROUND(AVG(rating), 2) as average_rating
+                FROM review
+                GROUP BY branch_id
+            ) rs ON b.branch_id = rs.branch_id
             WHERE b.branch_id = %s
-            GROUP BY b.branch_id, b.branch_name, b.address, b.phone
         """, (branch_id,))
         return cursor.fetchone()
 
@@ -242,21 +258,31 @@ def get_food_cost_percentage(branch_id, start_date, end_date):
     try:
         cursor.execute("""
             SELECT
-                SUM(o.total_amount) AS total_revenue,
-                SUM(oi.quantity * COALESCE(mii.quantity_required, 0) * COALESCE(ii.cost_per_unit, 0)) AS total_inventory_cost,
+                COALESCE(revenue.total_revenue, 0) AS total_revenue,
+                COALESCE(costs.total_inventory_cost, 0) AS total_inventory_cost,
                 ROUND(
-                    SUM(oi.quantity * COALESCE(mii.quantity_required, 0) * COALESCE(ii.cost_per_unit, 0)) /
-                    NULLIF(SUM(o.total_amount), 0) * 100, 2
+                    COALESCE(costs.total_inventory_cost, 0) /
+                    NULLIF(COALESCE(revenue.total_revenue, 0), 0) * 100, 2
                 ) AS food_cost_percentage
-            FROM orders o
-            JOIN order_item oi ON o.order_id = oi.order_id
-            LEFT JOIN menu_item_ingredient mii ON oi.menu_item_id = mii.menu_item_id
-            LEFT JOIN inventory_item ii ON mii.inventory_item_id = ii.inventory_item_id
-                AND ii.branch_id = o.branch_id
-            WHERE o.branch_id = %s
-            AND DATE(o.order_datetime) BETWEEN %s AND %s
-            AND o.order_status = 'COMPLETED'
-        """, (branch_id, start_date, end_date))
+            FROM (
+                SELECT SUM(total_amount) AS total_revenue
+                FROM orders
+                WHERE branch_id = %s
+                  AND DATE(order_datetime) BETWEEN %s AND %s
+                  AND order_status = 'COMPLETED'
+            ) revenue
+            CROSS JOIN (
+                SELECT SUM(oi.quantity * COALESCE(mii.quantity_required, 0) * COALESCE(ii.cost_per_unit, 0)) AS total_inventory_cost
+                FROM orders o
+                JOIN order_item oi ON o.order_id = oi.order_id
+                LEFT JOIN menu_item_ingredient mii ON oi.menu_item_id = mii.menu_item_id
+                LEFT JOIN inventory_item ii ON mii.inventory_item_id = ii.inventory_item_id
+                    AND ii.branch_id = o.branch_id
+                WHERE o.branch_id = %s
+                  AND DATE(o.order_datetime) BETWEEN %s AND %s
+                  AND o.order_status = 'COMPLETED'
+            ) costs
+        """, (branch_id, start_date, end_date, branch_id, start_date, end_date))
         return cursor.fetchone()
 
     except Exception as e:
@@ -315,17 +341,32 @@ def get_cross_branch_summary():
         cursor.execute("""
             SELECT
                 b.branch_id, b.branch_name,
-                COUNT(DISTINCT o.order_id) as total_orders,
-                SUM(o.total_amount) as total_revenue,
-                COUNT(DISTINCT e.person_id) as total_employees,
-                ROUND(AVG(r.rating), 2) as average_rating
+                COALESCE(os.total_orders, 0) as total_orders,
+                COALESCE(os.total_revenue, 0) as total_revenue,
+                COALESCE(es.total_employees, 0) as total_employees,
+                rs.average_rating
             FROM branch b
-            LEFT JOIN orders o ON b.branch_id = o.branch_id
-                AND o.order_status = 'COMPLETED'
-            LEFT JOIN employee e ON b.branch_id = e.branch_id
-                AND e.employment_status = 'ACTIVE'
-            LEFT JOIN review r ON b.branch_id = r.branch_id
-            GROUP BY b.branch_id, b.branch_name
+            LEFT JOIN (
+                SELECT branch_id,
+                       COUNT(order_id) as total_orders,
+                       SUM(total_amount) as total_revenue
+                FROM orders
+                WHERE order_status = 'COMPLETED'
+                GROUP BY branch_id
+            ) os ON b.branch_id = os.branch_id
+            LEFT JOIN (
+                SELECT branch_id,
+                       COUNT(person_id) as total_employees
+                FROM employee
+                WHERE employment_status = 'ACTIVE'
+                GROUP BY branch_id
+            ) es ON b.branch_id = es.branch_id
+            LEFT JOIN (
+                SELECT branch_id,
+                       ROUND(AVG(rating), 2) as average_rating
+                FROM review
+                GROUP BY branch_id
+            ) rs ON b.branch_id = rs.branch_id
             ORDER BY total_revenue DESC
         """)
         return cursor.fetchall()

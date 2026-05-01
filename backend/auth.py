@@ -124,6 +124,11 @@ def register_user(first_name, last_name, email, phone, username, password, role,
                 INSERT INTO manager (person_id, salary)
                 VALUES (%s, %s)
             """, (person_id, salary))
+            cursor.execute("""
+                UPDATE branch
+                SET manager_id = %s
+                WHERE branch_id = %s
+            """, (person_id, branch_id))
 
         elif role == 'ADMIN':
             cursor.execute("""

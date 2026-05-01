@@ -82,6 +82,7 @@ try:
         get_inventory_by_branch, add_inventory_item,
         update_inventory_quantity, get_all_suppliers,
     )
+    from backend.reviews import get_recent_reviews
     from backend.shifts import get_shifts_by_branch, create_shift, delete_shift
     BACKEND_AVAILABLE = True
 except Exception as _be:
@@ -104,7 +105,7 @@ UNIT_TYPES      = ["LB", "LBS", "OZ", "GAL", "L", "KG", "G", "ML", "CASE", "CASE
 MENU_CATEGORIES = ["Appetizers", "Above Sea", "Sea Level", "Under the Sea", "Sides", "Drinks", "Desserts"]
 EMP_STATUSES    = ["ACTIVE", "INACTIVE", "LEAVE", "TERMINATED"]
 
-TABS = ["Inventory", "Suppliers", "Schedule", "Employees", "Menu", "Analytics"]
+TABS = ["Inventory", "Suppliers", "Schedule", "Employees", "Menu", "Analytics", "Reviews"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -260,6 +261,7 @@ class ManagerUI(tk.Tk):
             "Employees":  self._build_employees,
             "Menu":       self._build_menu,
             "Analytics":  self._build_analytics,
+            "Reviews":    self._build_reviews,
         }[name]()
 
     # ── Shared helpers ────────────────────────────────────────────────────────
@@ -897,6 +899,73 @@ class ManagerUI(tk.Tk):
             self.show_tab("Menu")
         else:
             messagebox.showerror("Error", msg)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # REVIEWS TAB
+    # ══════════════════════════════════════════════════════════════════════════
+    def _build_reviews(self):
+        self._header("Customer Reviews", "ratings · comments · sentiment",
+                     ("Refresh", lambda: self.show_tab("Reviews")))
+
+        cf = self.content_frame
+        rows = get_recent_reviews(self.branch_id, 50) if BACKEND_AVAILABLE else []
+
+        summary = tk.Frame(cf, bg=BG_DARK)
+        summary.pack(fill="x", pady=(0, 12))
+        total = len(rows)
+        avg = sum(float(r.get("rating") or 0) for r in rows) / total if total else None
+        positive = sum(1 for r in rows if float(r.get("sentiment_score") or 0) > 0)
+        negative = sum(1 for r in rows if float(r.get("sentiment_score") or 0) < 0)
+
+        for label, value in [
+            ("Total Reviews", str(total)),
+            ("Avg Rating", f"{avg:.2f}" if avg is not None else "—"),
+            ("Positive", str(positive)),
+            ("Negative", str(negative)),
+        ]:
+            card = tk.Frame(summary, bg=BG_PANEL, padx=14, pady=10)
+            card.pack(side="left", expand=True, fill="x", padx=(0, 8))
+            tk.Label(card, text=label, bg=BG_PANEL, fg=MUTED,
+                     font=("Segoe UI", 9, "bold")).pack(anchor="w")
+            tk.Label(card, text=value, bg=BG_PANEL, fg=GOLD,
+                     font=("Segoe UI", 17, "bold")).pack(anchor="w")
+
+        cols = ("date", "customer", "rating", "sentiment", "comment")
+        frame = tk.Frame(cf, bg=BG_DARK)
+        frame.pack(fill="both", expand=True)
+        sb = ttk.Scrollbar(frame, orient="vertical")
+        sb.pack(side="right", fill="y")
+        tree = ttk.Treeview(frame, columns=cols, show="headings",
+                            style="Flow.Treeview", height=18, yscrollcommand=sb.set)
+        sb.config(command=tree.yview)
+        tree.pack(fill="both", expand=True)
+
+        for cid, heading, width in [
+            ("date", "Date", 145),
+            ("customer", "Customer", 170),
+            ("rating", "Rating", 70),
+            ("sentiment", "Sentiment", 90),
+            ("comment", "Comment", 520),
+        ]:
+            tree.heading(cid, text=heading)
+            tree.column(cid, width=width, anchor="w")
+
+        if rows:
+            for r in rows:
+                first = r.get("first_name") or ""
+                last = r.get("last_name") or ""
+                customer = " ".join(part for part in [first, last] if part).strip() or "Guest"
+                sentiment = r.get("sentiment_score")
+                sentiment_text = "—" if sentiment is None else f"{float(sentiment):.2f}"
+                tree.insert("", "end", values=(
+                    str(r.get("created_at") or ""),
+                    customer,
+                    r.get("rating") or "—",
+                    sentiment_text,
+                    r.get("comments") or "",
+                ))
+        else:
+            tree.insert("", "end", values=("", "—", "—", "—", "No customer reviews submitted for this branch yet."))
 
     # ══════════════════════════════════════════════════════════════════════════
     # ANALYTICS TAB

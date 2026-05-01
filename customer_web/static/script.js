@@ -7,7 +7,7 @@ const branches = [
     { branch_id: 11, branch_name: "Soul by the Sea - Suffolk" },
     { branch_id: 12, branch_name: "Soul by the Sea - Virginia Beach" },
 ];
-const categories = ["Appetizers", "Above Sea", "Sea Level", "Under the Sea", "Sides", "Drinks", "Desserts"];
+let categories = ["Appetizers", "Above Sea", "Sea Level", "Under the Sea", "Sides", "Drinks", "Desserts"];
 const dates = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() + i);
@@ -124,6 +124,9 @@ function cartItemLabel(item) {
 }
 
 function renderMenu(category) {
+    if (!categories.includes(category)) {
+        category = categories[0];
+    }
     document.getElementById("category-title").textContent = category;
     const list = document.getElementById("menu-list");
     list.innerHTML = "";
@@ -147,10 +150,10 @@ function renderMenu(category) {
                     <h3>${item.name} ${soldOutMarkup}</h3>
                     ${priceMarkup}
                 </div>
-                <p>${item.description}</p>
+                <p>${item.description || "Freshly added menu item."}</p>
                 ${soldOutNote}
                 <div class="menu-card-bottom">
-                    <span class="tag">${item.tags}</span>
+                    <span class="tag">${item.tags || "Menu Item"}</span>
                     ${actionMarkup}
                 </div>
             `;
@@ -240,10 +243,12 @@ function fillSelect(select, rows, valueKey, labelKey, selectedValue = null) {
 function bootstrapControls() {
     const categoryWrap = document.getElementById("category-buttons");
     categoryWrap.innerHTML = "";
+    const activeCategory = document.querySelector(".category-btn.active")?.dataset.category;
+    const selectedCategory = categories.includes(activeCategory) ? activeCategory : categories[0];
     categories.forEach((category, index) => {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = `category-btn${index === 0 ? " active" : ""}`;
+        button.className = `category-btn${category === selectedCategory || (!selectedCategory && index === 0) ? " active" : ""}`;
         button.dataset.category = category;
         button.textContent = category;
         button.addEventListener("click", () => {
@@ -491,8 +496,14 @@ async function loadMenuFromDB() {
         const response = await fetch("/api/menu-items");
         const data = await response.json();
         if (data.ok && data.items && data.items.length > 0) {
+            const staticItemsByName = new Map(menuItems.map(item => [item.name, item]));
             menuItems.length = 0;
-            data.items.forEach(item => menuItems.push(item));
+            data.items.forEach(item => {
+                const staticItem = staticItemsByName.get(item.name) || {};
+                menuItems.push({ ...staticItem, ...item });
+            });
+            categories = [...new Set(menuItems.map(item => item.category).filter(Boolean))];
+            bootstrapControls();
         }
     } catch (_) {}
 }
@@ -500,8 +511,9 @@ async function loadMenuFromDB() {
 bootstrapControls();
 renderCart();
 refreshReservationTimes();
-refreshMenuAvailability();
-loadMenuFromDB().then(() => renderMenu(categories[0]));
+loadMenuFromDB()
+    .then(refreshMenuAvailability)
+    .then(() => renderMenu(document.querySelector(".category-btn.active")?.dataset.category || categories[0]));
 
 const params = new URLSearchParams(window.location.search);
 if (params.get("reservation") === "confirmed") {

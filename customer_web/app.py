@@ -270,16 +270,25 @@ def get_or_create_customer(name, phone):
 
     cursor = conn.cursor()
     try:
+        parts = name.split()
+        first_name = parts[0]
+        last_name = " ".join(parts[1:]) if len(parts) > 1 else "Guest"
         safe_phone = "".join(ch for ch in phone if ch.isdigit()) or "guest"
         email = f"guest.{safe_phone}@soulbythesea.local"
         cursor.execute("SELECT person_id FROM person WHERE email = %s", (email,))
         row = cursor.fetchone()
         if row:
+            cursor.execute(
+                """
+                UPDATE person
+                SET first_name = %s, last_name = %s, phone = %s
+                WHERE person_id = %s
+                """,
+                (first_name, last_name, phone, row[0]),
+            )
+            conn.commit()
             return row[0]
 
-        parts = name.split()
-        first_name = parts[0]
-        last_name = " ".join(parts[1:]) if len(parts) > 1 else "Guest"
         cursor.execute(
             """
             INSERT INTO person (first_name, last_name, phone, email)
@@ -702,7 +711,7 @@ def create_reservation():
 
     publish_event(
         "new_reservation",
-        {"reservation_id": reservation_id, "branch_id": branch_id, "date": selected_date, "time": selected_time, "party_size": party_size},
+        {"reservation_id": reservation_id, "branch_id": branch_id, "name": name, "date": selected_date, "time": selected_time, "party_size": party_size},
     )
     return jsonify({"ok": True, "message": "Your reservation has been confirmed.", "reservation_id": reservation_id})
 

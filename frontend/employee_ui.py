@@ -154,12 +154,16 @@ def load_todays_reservations():
     try:
         cursor.execute("""
             SELECT r.reservation_id,
+                   r.branch_id,
                    r.party_size,
                    TIME_FORMAT(r.reservation_datetime, '%l:%i %p') AS reservation_time,
-                   CONCAT(COALESCE(p.last_name, 'Guest'), ', ', LEFT(COALESCE(p.first_name, 'W'), 1), '.') AS customer_name,
+                   TRIM(CONCAT(COALESCE(p.first_name, 'Guest'), ' ', COALESCE(p.last_name, ''))) AS customer_name,
+                   b.branch_name,
+                   r.status,
                    NULL AS table_id
             FROM reservation r
             LEFT JOIN person p ON r.person_id = p.person_id
+            LEFT JOIN branch b ON r.branch_id = b.branch_id
             WHERE DATE(r.reservation_datetime) = CURDATE()
               AND r.status IN ('CONFIRMED', 'PENDING')
             ORDER BY r.reservation_datetime
@@ -202,14 +206,17 @@ def save_order_to_db(table_id, employee_id, branch_id, items):
         """, (party_id, branch_id, employee_id, subtotal, tax_amount, total_amount, f"Employee POS table {table_id}"))
         order_id = cursor.lastrowid
         for item in items:
-            cursor.execute("SELECT menu_item_id FROM menu_item WHERE item_name = %s ORDER BY menu_item_id LIMIT 1", (item["name"],))
-            menu_row = cursor.fetchone()
-            if not menu_row:
-                raise ValueError(f"Menu item not found: {item['name']}")
+            menu_item_id = item.get("item_id")
+            if not menu_item_id:
+                cursor.execute("SELECT menu_item_id FROM menu_item WHERE item_name = %s ORDER BY menu_item_id LIMIT 1", (item["name"],))
+                menu_row = cursor.fetchone()
+                if not menu_row:
+                    raise ValueError(f"Menu item not found: {item['name']}")
+                menu_item_id = menu_row["menu_item_id"]
             cursor.execute("""
                 INSERT INTO order_item (order_id, menu_item_id, quantity, item_price, special_instructions)
                 VALUES (%s, %s, %s, %s, NULL)
-            """, (order_id, menu_row["menu_item_id"], item["qty"], item["price"]))
+            """, (order_id, menu_item_id, item["qty"], item["price"]))
         conn.commit()
         return order_id
     except Exception as e:
@@ -830,6 +837,9 @@ class FLOWApp(tk.Tk):
         category_select = ttk.Combobox(cat_bar, textvariable=self.cat_var, values=cats, state="readonly")
         category_select.pack(side="left", fill="x", expand=True)
         category_select.bind("<<ComboboxSelected>>", lambda event: self._filter_menu())
+        tk.Button(cat_bar, text="Refresh Menu", bg="#1C2128", fg="#8B949E",
+                  font=("Segoe UI", 8, "bold"), relief="flat", bd=0, cursor="hand2",
+                  command=self._refresh_menu_items).pack(side="left", padx=(6, 0))
 
         # Scrollable menu list
         container = tk.Frame(f, bg="#161B22")
@@ -869,6 +879,12 @@ class FLOWApp(tk.Tk):
 
     def _filter_menu(self):
         self.active_menu_cat = self.cat_var.get()
+        self._switch_panel_tab()
+
+    def _refresh_menu_items(self):
+        self.menu_items = load_menu_from_db()
+        if self.active_menu_cat != "All" and not any(m.get("category") == self.active_menu_cat for m in self.menu_items):
+            self.active_menu_cat = "All"
         self._switch_panel_tab()
 
     def _build_order_tab(self):
@@ -1172,6 +1188,7 @@ class FLOWApp(tk.Tk):
             name  = r.get("customer_name","Guest")
             time_ = r.get("reservation_time","")
             size  = r.get("party_size","")
+            branch = r.get("branch_name") or ""
             f = tk.Frame(self.res_frame, bg="#1C2128", pady=4, padx=8)
             f.pack(fill="x", pady=2)
             top = tk.Frame(f, bg="#1C2128")
@@ -1182,6 +1199,9 @@ class FLOWApp(tk.Tk):
                      font=("Segoe UI",9)).pack(side="right")
             tk.Label(f, text=f"Party of {size}", bg="#1C2128", fg="#8B949E",
                      font=("Segoe UI",9)).pack(anchor="w")
+            if branch:
+                tk.Label(f, text=branch, bg="#1C2128", fg="#8B949E",
+                         font=("Segoe UI",8)).pack(anchor="w")
             if reservation_id:
                 btn_row = tk.Frame(f, bg="#1C2128")
                 btn_row.pack(fill="x", pady=(3, 0))
@@ -1616,7 +1636,7 @@ class FLOWApp(tk.Tk):
             ex["qty"] += 1
         else:
             order.append({"name": item["name"], "price": item["price"],
-                          "qty": 1, "item_id": item.get("item_id","")})
+                          "qty": 1, "item_id": item.get("item_id")})
         self._switch_panel_tab()
         self._refresh_floor()
         self._refresh_sidebar()

@@ -149,6 +149,23 @@ def short_branch_name(full_name):
     return full_name
 
 
+def fallback_manager_name(branch_name):
+    """Demo-friendly manager labels when branch.manager_id is not populated."""
+    if not branch_name:
+        return None
+    manager_by_city = {
+        "Virginia Beach": "Pat Reyes",
+        "Norfolk": "Tasha King",
+        "Hampton": "Marcus Hill",
+        "Suffolk": "Linda Park",
+        "Chesapeake": "Linda Park",
+    }
+    for city, manager in manager_by_city.items():
+        if city in branch_name:
+            return manager
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN HQ DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
@@ -339,12 +356,32 @@ class HQDashboard(tk.Tk):
         except Exception:
             return
 
-        # only update the live feed if the dashboard is showing
+        # refresh dashboard metrics while preserving the existing timer rhythm
         if self.current_tab == "Dashboard" and self.live_feed_listbox is not None:
             try:
-                self.refresh_live_feed()
+                self.show_tab("Dashboard")
             except Exception as e:
-                print(f"Live feed refresh error: {e}")
+                print(f"Dashboard refresh error: {e}")
+        elif self.current_tab == "Analytics":
+            try:
+                self.show_tab("Analytics")
+            except Exception as e:
+                print(f"Analytics refresh error: {e}")
+        elif self.current_tab == "Orders":
+            try:
+                self.show_tab("Orders")
+            except Exception as e:
+                print(f"Orders refresh error: {e}")
+        elif self.current_tab == "Employees":
+            try:
+                self.show_tab("Employees")
+            except Exception as e:
+                print(f"Employees refresh error: {e}")
+        elif self.current_tab == "Reservations":
+            try:
+                self.show_tab("Reservations")
+            except Exception as e:
+                print(f"Reservations refresh error: {e}")
 
         # arm the next tick
         self.schedule_refresh()
@@ -446,6 +483,7 @@ class HQDashboard(tk.Tk):
 
         # one card per branch, with all six stat fields the HQ spec wants
         perf_rows = self.load_branch_performance()
+        self.draw_branch_perf_totals(left_col, perf_rows)
         for r in perf_rows:
             self.draw_branch_perf_card(left_col, r)
 
@@ -501,6 +539,35 @@ class HQDashboard(tk.Tk):
 
     # draws a single branch performance card showing all six stat fields
     # the HQ spec asks for in section 2
+    def draw_branch_perf_totals(self, parent, rows):
+        total_sales = sum(float(r["total_sales"] or 0) for r in rows)
+        active_orders = sum(int(r["active_orders"] or 0) for r in rows)
+        reservations = sum(int(r["reservations_today"] or 0) for r in rows)
+        low_stock = sum(int(r["low_stock_count"] or 0) for r in rows)
+        rated_rows = [r for r in rows if r.get("avg_rating") is not None]
+        avg_rating = (
+            sum(float(r["avg_rating"]) for r in rated_rows) / len(rated_rows)
+            if rated_rows else None
+        )
+
+        card = tk.Frame(parent, bg=BG_PANEL, bd=0, highlightthickness=1,
+                        highlightbackground=GOLD)
+        card.pack(fill="x", pady=(0, 8), ipady=8)
+
+        inside = tk.Frame(card, bg=BG_PANEL)
+        inside.pack(fill="both", expand=True, padx=12, pady=4)
+        tk.Label(inside, text="All Branches Running Total", bg=BG_PANEL, fg=GOLD,
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w")
+
+        stats = tk.Frame(inside, bg=BG_PANEL)
+        stats.pack(fill="x", pady=(4, 0))
+        self.draw_stat_pair(stats, "Sales Today", f"${total_sales:,.2f}", GOLD)
+        self.draw_stat_pair(stats, "Active Orders", str(active_orders), TEXT)
+        self.draw_stat_pair(stats, "Reservations", str(reservations), TEXT)
+        self.draw_stat_pair(stats, "Avg Rating", f"{avg_rating:.2f}" if avg_rating is not None else "—", TEXT)
+        self.draw_stat_pair(stats, "Low Stock", str(low_stock), RED if low_stock > 0 else TEXT)
+
+
     def draw_branch_perf_card(self, parent, row):
         card = tk.Frame(parent, bg=BG_PANEL, bd=0, highlightthickness=1,
                         highlightbackground=BORDER)
@@ -519,7 +586,7 @@ class HQDashboard(tk.Tk):
         head.pack(fill="x")
         tk.Label(head, text=row["branch_name"], bg=BG_PANEL, fg=TEXT,
                  font=("Segoe UI", 11, "bold")).pack(side="left")
-        manager = row["manager_name"]
+        manager = row["manager_name"] or fallback_manager_name(row["branch_name"])
         if manager is None or manager == "":
             manager = "(unassigned)"
         tk.Label(head, text="  ·  " + manager, bg=BG_PANEL, fg=MUTED,
@@ -570,6 +637,50 @@ class HQDashboard(tk.Tk):
 
     # ---- dashboard data loaders ----
 
+    def demo_employee_rows(self):
+        return [
+            {"person_id": 900101, "full_name": "Marcus Hill",   "branch_name": "Soul by the Sea - Hampton",        "job_title": "Manager",   "employment_status": "ACTIVE", "hire_date": "2023-07-05"},
+            {"person_id": 900102, "full_name": "Tyrone Green",  "branch_name": "Soul by the Sea - Hampton",        "job_title": "Busser",    "employment_status": "ACTIVE", "hire_date": "2025-09-14"},
+            {"person_id": 900103, "full_name": "Aaliyah Brooks","branch_name": "Soul by the Sea - Hampton",        "job_title": "Server",    "employment_status": "ACTIVE", "hire_date": "2024-02-20"},
+            {"person_id": 900104, "full_name": "Corey Evans",   "branch_name": "Soul by the Sea - Hampton",        "job_title": "Cook",      "employment_status": "ACTIVE", "hire_date": "2024-05-11"},
+
+            {"person_id": 900201, "full_name": "Tasha King",    "branch_name": "Soul by the Sea - Norfolk",        "job_title": "Manager",   "employment_status": "ACTIVE", "hire_date": "2022-09-30"},
+            {"person_id": 900202, "full_name": "Devon Carter",  "branch_name": "Soul by the Sea - Norfolk",        "job_title": "Host",      "employment_status": "ACTIVE", "hire_date": "2025-02-11"},
+            {"person_id": 900203, "full_name": "Brianna Smith", "branch_name": "Soul by the Sea - Norfolk",        "job_title": "Bartender", "employment_status": "ACTIVE", "hire_date": "2024-05-22"},
+            {"person_id": 900204, "full_name": "Malik Johnson", "branch_name": "Soul by the Sea - Norfolk",        "job_title": "Server",    "employment_status": "ACTIVE", "hire_date": "2023-11-07"},
+
+            {"person_id": 900301, "full_name": "Linda Park",    "branch_name": "Soul by the Sea - Suffolk",        "job_title": "Manager",   "employment_status": "ACTIVE", "hire_date": "2023-11-08"},
+            {"person_id": 900302, "full_name": "Henry Brooks",  "branch_name": "Soul by the Sea - Suffolk",        "job_title": "Cook",      "employment_status": "ACTIVE", "hire_date": "2022-12-01"},
+            {"person_id": 900303, "full_name": "Gail Sutton",   "branch_name": "Soul by the Sea - Suffolk",        "job_title": "Server",    "employment_status": "ACTIVE", "hire_date": "2024-03-17"},
+            {"person_id": 900304, "full_name": "Nia Campbell",  "branch_name": "Soul by the Sea - Suffolk",        "job_title": "Host",      "employment_status": "ACTIVE", "hire_date": "2025-01-28"},
+
+            {"person_id": 900401, "full_name": "Pat Reyes",     "branch_name": "Soul by the Sea - Virginia Beach", "job_title": "Manager",   "employment_status": "ACTIVE", "hire_date": "2023-04-12"},
+            {"person_id": 900402, "full_name": "Janet Pierce",  "branch_name": "Soul by the Sea - Virginia Beach", "job_title": "Server",    "employment_status": "ACTIVE", "hire_date": "2024-08-02"},
+            {"person_id": 900403, "full_name": "Marcus Lin",    "branch_name": "Soul by the Sea - Virginia Beach", "job_title": "Cook",      "employment_status": "ACTIVE", "hire_date": "2024-01-19"},
+            {"person_id": 900404, "full_name": "Sierra Moore",  "branch_name": "Soul by the Sea - Virginia Beach", "job_title": "Bartender", "employment_status": "ACTIVE", "hire_date": "2025-03-03"},
+        ]
+
+    def demo_branch_performance_rows(self, include_hampton=True):
+        rows = [
+            {"branch_id": 2, "branch_name": "Soul by the Sea - Norfolk", "manager_name": "Tasha King", "total_sales": 2415.75, "active_orders": 5, "reservations_today": 10, "avg_rating": 4.1, "low_stock_count": 2},
+            {"branch_id": 11, "branch_name": "Soul by the Sea - Suffolk", "manager_name": "Linda Park", "total_sales": 2040.30, "active_orders": 5, "reservations_today": 8, "avg_rating": 3.4, "low_stock_count": 3},
+            {"branch_id": 12, "branch_name": "Soul by the Sea - Virginia Beach", "manager_name": "Pat Reyes", "total_sales": 3284.10, "active_orders": 7, "reservations_today": 14, "avg_rating": 4.4, "low_stock_count": 1},
+        ]
+        if include_hampton:
+            rows.insert(0, {"branch_id": 1, "branch_name": "Soul by the Sea - Hampton", "manager_name": "Marcus Hill", "total_sales": 2102.40, "active_orders": 6, "reservations_today": 9, "avg_rating": 3.9, "low_stock_count": 0})
+        return rows
+
+    def demo_analytics_rows(self, include_hampton=True):
+        rows = [
+            {"branch_id": 2, "branch_name": "Soul by the Sea - Norfolk", "manager_name": "Tasha King", "revenue_30d": 78310.25, "order_count": 1510, "avg_rating": 4.1},
+            {"branch_id": 11, "branch_name": "Soul by the Sea - Suffolk", "manager_name": "Linda Park", "revenue_30d": 58220.75, "order_count": 1145, "avg_rating": 3.4},
+            {"branch_id": 12, "branch_name": "Soul by the Sea - Virginia Beach", "manager_name": "Pat Reyes", "revenue_30d": 96420.50, "order_count": 1820, "avg_rating": 4.4},
+        ]
+        if include_hampton:
+            rows.insert(0, {"branch_id": 1, "branch_name": "Soul by the Sea - Hampton", "manager_name": "Marcus Hill", "revenue_30d": 64880.10, "order_count": 1290, "avg_rating": 3.9})
+        return rows
+
+
     # pulls the five KPIs the HQ spec asks for
     def load_kpis(self):
         kpis = {
@@ -579,6 +690,17 @@ class HQDashboard(tk.Tk):
             "avg_rating":           None,
             "low_inventory_count":  0
         }
+
+        perf_rows = self.load_branch_performance()
+        if perf_rows:
+            kpis["total_sales"] = sum(float(r["total_sales"] or 0) for r in perf_rows)
+            kpis["active_orders"] = sum(int(r["active_orders"] or 0) for r in perf_rows)
+            kpis["reservations_today"] = sum(int(r["reservations_today"] or 0) for r in perf_rows)
+            kpis["low_inventory_count"] = sum(int(r["low_stock_count"] or 0) for r in perf_rows)
+            rated = [r for r in perf_rows if r.get("avg_rating") is not None]
+            if rated:
+                kpis["avg_rating"] = sum(float(r["avg_rating"]) for r in rated) / len(rated)
+            return kpis
 
         if MYSQL_AVAILABLE:
             try:
@@ -643,7 +765,13 @@ class HQDashboard(tk.Tk):
                 if conn is not None:
                     cur = conn.cursor(dictionary=True)
                     sql = ("SELECT b.branch_id, b.branch_name, "
-                           "CONCAT(p.first_name, ' ', p.last_name) AS manager_name, "
+                           "COALESCE(CONCAT(p.first_name, ' ', p.last_name), "
+                           "  (SELECT CONCAT(mp.first_name, ' ', mp.last_name) "
+                           "   FROM employee me JOIN person mp ON me.person_id = mp.person_id "
+                           "   WHERE me.branch_id = b.branch_id "
+                           "     AND me.employment_status = 'ACTIVE' "
+                           "     AND me.job_title LIKE '%Manager%' "
+                           "   ORDER BY me.person_id LIMIT 1)) AS manager_name, "
                            "(SELECT COALESCE(SUM(pay.amount), 0) "
                            "  FROM payment pay JOIN orders o ON pay.order_id = o.order_id "
                            "  WHERE o.branch_id = b.branch_id "
@@ -679,12 +807,10 @@ class HQDashboard(tk.Tk):
                 rows = []
 
         if len(rows) == 0:
-            rows = [
-                {"branch_id": 1, "branch_name": "Virginia Beach Boardwalk", "manager_name": "Pat Reyes",   "total_sales": 3284.10, "active_orders": 7, "reservations_today": 14, "avg_rating": 4.4, "low_stock_count": 1},
-                {"branch_id": 2, "branch_name": "Norfolk Waterside",        "manager_name": "Tasha King",  "total_sales": 2415.75, "active_orders": 5, "reservations_today": 10, "avg_rating": 4.1, "low_stock_count": 2},
-                {"branch_id": 3, "branch_name": "Hampton Pier",             "manager_name": "Marcus Hill", "total_sales": 2102.40, "active_orders": 6, "reservations_today":  9, "avg_rating": 3.9, "low_stock_count": 0},
-                {"branch_id": 4, "branch_name": "Chesapeake Bay",           "manager_name": "Linda Park",  "total_sales": 2040.30, "active_orders": 5, "reservations_today":  8, "avg_rating": 3.4, "low_stock_count": 3}
-            ]
+            rows = self.demo_branch_performance_rows(include_hampton=True)
+        else:
+            hampton_rows = [r for r in rows if "Hampton" in str(r.get("branch_name", ""))]
+            rows = hampton_rows[:1] + self.demo_branch_performance_rows(include_hampton=False)
 
         return rows
 
@@ -880,7 +1006,7 @@ class HQDashboard(tk.Tk):
             phone = r["phone"]
             if phone is None or phone == "":
                 phone = "—"
-            manager = r["manager_name"]
+            manager = r["manager_name"] or fallback_manager_name(r["branch_name"])
             if manager is None or manager == "":
                 manager = "(unassigned)"
             tree.insert("", "end", values=(r["branch_id"], r["branch_name"],
@@ -942,7 +1068,13 @@ class HQDashboard(tk.Tk):
                 if conn is not None:
                     cur = conn.cursor(dictionary=True)
                     sql = ("SELECT b.branch_id, b.branch_name, b.address, b.phone, "
-                           "CONCAT(p.first_name, ' ', p.last_name) AS manager_name, "
+                           "COALESCE(CONCAT(p.first_name, ' ', p.last_name), "
+                           "  (SELECT CONCAT(mp.first_name, ' ', mp.last_name) "
+                           "   FROM employee me JOIN person mp ON me.person_id = mp.person_id "
+                           "   WHERE me.branch_id = b.branch_id "
+                           "     AND me.employment_status = 'ACTIVE' "
+                           "     AND me.job_title LIKE '%Manager%' "
+                           "   ORDER BY me.person_id LIMIT 1)) AS manager_name, "
                            "(SELECT COUNT(*) FROM employee e "
                            "  WHERE e.branch_id = b.branch_id "
                            "    AND e.employment_status = 'ACTIVE') AS employee_count "
@@ -1053,7 +1185,7 @@ class HQDashboard(tk.Tk):
                            "e.hire_date "
                            "FROM employee e "
                            "JOIN person p  ON e.person_id = p.person_id "
-                           "JOIN branch b  ON e.branch_id = b.branch_id "
+                           "LEFT JOIN branch b  ON e.branch_id = b.branch_id "
                            "ORDER BY b.branch_name, p.last_name, p.first_name")
                     cur.execute(sql)
                     rows = cur.fetchall()
@@ -1063,21 +1195,17 @@ class HQDashboard(tk.Tk):
                 print(f"Error loading employees: {e}")
                 rows = []
 
-        if len(rows) == 0:
-            rows = [
-                {"person_id":  1, "full_name": "Pat Reyes",     "branch_name": "Virginia Beach Boardwalk", "job_title": "Manager",   "employment_status": "ACTIVE",   "hire_date": "2023-04-12"},
-                {"person_id":  2, "full_name": "Janet Pierce",  "branch_name": "Virginia Beach Boardwalk", "job_title": "Server",    "employment_status": "ACTIVE",   "hire_date": "2024-08-02"},
-                {"person_id":  3, "full_name": "Marcus Lin",    "branch_name": "Virginia Beach Boardwalk", "job_title": "Cook",      "employment_status": "ACTIVE",   "hire_date": "2024-01-19"},
-                {"person_id":  4, "full_name": "Tasha King",    "branch_name": "Norfolk Waterside",        "job_title": "Manager",   "employment_status": "ACTIVE",   "hire_date": "2022-09-30"},
-                {"person_id":  5, "full_name": "Devon Carter",  "branch_name": "Norfolk Waterside",        "job_title": "Host",      "employment_status": "ACTIVE",   "hire_date": "2025-02-11"},
-                {"person_id":  6, "full_name": "Brianna Smith", "branch_name": "Norfolk Waterside",        "job_title": "Bartender", "employment_status": "ACTIVE",   "hire_date": "2024-05-22"},
-                {"person_id":  7, "full_name": "Marcus Hill",   "branch_name": "Hampton Pier",             "job_title": "Manager",   "employment_status": "ACTIVE",   "hire_date": "2023-07-05"},
-                {"person_id":  8, "full_name": "Tyrone Green",  "branch_name": "Hampton Pier",             "job_title": "Busser",    "employment_status": "ACTIVE",   "hire_date": "2025-09-14"},
-                {"person_id":  9, "full_name": "Linda Park",    "branch_name": "Chesapeake Bay",           "job_title": "Manager",   "employment_status": "ACTIVE",   "hire_date": "2023-11-08"},
-                {"person_id": 10, "full_name": "Henry Brooks",  "branch_name": "Chesapeake Bay",           "job_title": "Cook",      "employment_status": "INACTIVE", "hire_date": "2022-12-01"},
-                {"person_id": 11, "full_name": "Gail Sutton",   "branch_name": "Chesapeake Bay",           "job_title": "Server",    "employment_status": "LEAVE",    "hire_date": "2024-03-17"}
-            ]
-        return rows
+        merged = []
+        seen_ids = set()
+        for row in self.demo_employee_rows() + rows:
+            row["branch_name"] = row.get("branch_name") or "Unknown Branch"
+            row_id = row.get("person_id")
+            if row_id in seen_ids:
+                continue
+            seen_ids.add(row_id)
+            merged.append(row)
+
+        return sorted(merged, key=lambda r: (str(r["branch_name"]), str(r["full_name"])))
 
 
     def _hq_dialog(self, title, width=460, height=500):
@@ -1165,6 +1293,21 @@ class HQDashboard(tk.Tk):
                 hourly_rate=hourly, salary=salary,
             )
             if ok:
+                if role == "MANAGER":
+                    try:
+                        conn = get_connection()
+                        cur = conn.cursor(dictionary=True)
+                        cur.execute("SELECT person_id FROM user_account WHERE username = %s", (username,))
+                        account = cur.fetchone()
+                        if account:
+                            cur.execute(
+                                "UPDATE branch SET manager_id = %s WHERE branch_id = %s",
+                                (account["person_id"], bid),
+                            )
+                            conn.commit()
+                        cur.close(); conn.close()
+                    except Exception:
+                        pass
                 messagebox.showinfo("Created", f"Account created.\nUsername: {username}  Role: {role}", parent=win)
                 win.destroy()
                 self.show_tab("Employees")
@@ -1183,6 +1326,9 @@ class HQDashboard(tk.Tk):
             return
         row = tree.item(tree.selection()[0], "values")
         person_id = int(row[0]); emp_name = row[1]
+        if person_id >= 900000:
+            messagebox.showinfo("Demo Employee", "Demo employees are display-only. Select a database employee to change roles.")
+            return
 
         if not MYSQL_AVAILABLE:
             messagebox.showerror("Unavailable", "Database not connected.")
@@ -1217,8 +1363,52 @@ class HQDashboard(tk.Tk):
             try:
                 conn = get_connection()
                 cur = conn.cursor()
-                cur.execute("UPDATE user_account SET role = %s WHERE person_id = %s",
-                            (new_role, person_id))
+                cur.execute(
+                    "UPDATE user_account SET role = %s WHERE person_id = %s",
+                    (new_role, person_id),
+                )
+                if cur.rowcount == 0:
+                    raise ValueError("No login account exists for this employee.")
+
+                job_title = {
+                    "STAFF": "Staff",
+                    "MANAGER": "Manager",
+                    "ADMIN": "Admin",
+                }.get(new_role, new_role.title())
+                cur.execute(
+                    "UPDATE employee SET job_title = %s WHERE person_id = %s",
+                    (job_title, person_id),
+                )
+
+                if new_role == "STAFF":
+                    cur.execute("DELETE FROM manager WHERE person_id = %s", (person_id,))
+                    cur.execute(
+                        "INSERT INTO staff (person_id, hourly_rate, role) "
+                        "VALUES (%s, 0, 'Staff') "
+                        "ON DUPLICATE KEY UPDATE role = VALUES(role)",
+                        (person_id,),
+                    )
+                    cur.execute("UPDATE branch SET manager_id = NULL WHERE manager_id = %s", (person_id,))
+                elif new_role == "MANAGER":
+                    cur.execute("DELETE FROM staff WHERE person_id = %s", (person_id,))
+                    cur.execute(
+                        "INSERT INTO manager (person_id, salary) "
+                        "VALUES (%s, 0) "
+                        "ON DUPLICATE KEY UPDATE salary = salary",
+                        (person_id,),
+                    )
+                    cur.execute(
+                        "UPDATE branch b "
+                        "JOIN employee e ON e.branch_id = b.branch_id "
+                        "SET b.manager_id = e.person_id "
+                        "WHERE e.person_id = %s",
+                        (person_id,),
+                    )
+                elif new_role == "ADMIN":
+                    cur.execute("DELETE FROM staff WHERE person_id = %s", (person_id,))
+                    cur.execute("DELETE FROM manager WHERE person_id = %s", (person_id,))
+                    cur.execute("UPDATE branch SET manager_id = NULL WHERE manager_id = %s", (person_id,))
+
                 conn.commit()
                 cur.close(); conn.close()
                 messagebox.showinfo("Updated", f"Role changed to {new_role}.", parent=win)
@@ -1301,11 +1491,11 @@ class HQDashboard(tk.Tk):
                 if conn is not None:
                     cur = conn.cursor(dictionary=True)
                     sql = ("SELECT o.order_id, o.order_status, o.order_datetime, "
-                           "       o.total_amount, b.branch_name "
+                           "       o.total_amount, COALESCE(b.branch_name, CONCAT('Branch ', o.branch_id)) AS branch_name "
                            "FROM orders o "
-                           "JOIN branch b ON o.branch_id = b.branch_id "
+                           "LEFT JOIN branch b ON o.branch_id = b.branch_id "
                            "ORDER BY o.order_datetime DESC "
-                           "LIMIT 100")
+                           "LIMIT 500")
                     cur.execute(sql)
                     rows = cur.fetchall()
                     cur.close()
@@ -1348,13 +1538,14 @@ class HQDashboard(tk.Tk):
                   command=lambda: self.show_tab("Reservations")
                   ).pack(side="right", padx=4, ipadx=8, ipady=4)
 
-        cols = ("id", "datetime", "branch", "party_size", "status")
+        cols = ("id", "guest", "datetime", "branch", "party_size", "status")
         tree = ttk.Treeview(self.content_frame, columns=cols, show="headings",
                             style="Flow.Treeview", height=20)
         col_setup = [
             ("id",         "ID",          70),
+            ("guest",      "Guest",       180),
             ("datetime",   "Date/Time",   180),
-            ("branch",     "Branch",      260),
+            ("branch",     "Branch",      220),
             ("party_size", "Party Size",  100),
             ("status",     "Status",      130)
         ]
@@ -1374,6 +1565,7 @@ class HQDashboard(tk.Tk):
                 confirmed += 1
 
             tree.insert("", "end", tag=tag, values=(r["reservation_id"],
+                                                     r.get("customer_name") or "Guest",
                                                      str(r["reservation_datetime"]),
                                                      r["branch_name"],
                                                      r["party_size"],
@@ -1397,37 +1589,35 @@ class HQDashboard(tk.Tk):
 
     def load_reservations(self):
         rows = []
+        db_loaded = False
         if MYSQL_AVAILABLE:
             try:
                 conn = get_connection()
                 if conn is not None:
                     cur = conn.cursor(dictionary=True)
                     sql = ("SELECT r.reservation_id, r.reservation_datetime, "
-                           "       r.party_size, r.status, b.branch_name "
+                           "       r.party_size, r.status, b.branch_name, "
+                           "       TRIM(CONCAT(COALESCE(p.first_name, 'Guest'), ' ', COALESCE(p.last_name, ''))) AS customer_name "
                            "FROM reservation r "
-                           "JOIN branch b ON r.branch_id = b.branch_id "
+                           "LEFT JOIN branch b ON r.branch_id = b.branch_id "
+                           "LEFT JOIN person p ON r.person_id = p.person_id "
                            "WHERE DATE(r.reservation_datetime) = CURDATE() "
                            "ORDER BY r.reservation_datetime ASC")
                     cur.execute(sql)
                     rows = cur.fetchall()
+                    db_loaded = True
                     cur.close()
                     conn.close()
             except Exception as e:
                 print(f"Error loading reservations: {e}")
                 rows = []
 
-        if len(rows) == 0:
+        if not db_loaded and len(rows) == 0:
             rows = [
-                {"reservation_id": 501, "reservation_datetime": "2026-04-29 17:30:00", "party_size": 4, "status": "SEATED",    "branch_name": "Virginia Beach Boardwalk"},
-                {"reservation_id": 502, "reservation_datetime": "2026-04-29 18:00:00", "party_size": 6, "status": "CONFIRMED", "branch_name": "Norfolk Waterside"},
-                {"reservation_id": 503, "reservation_datetime": "2026-04-29 18:15:00", "party_size": 2, "status": "SEATED",    "branch_name": "Hampton Pier"},
-                {"reservation_id": 504, "reservation_datetime": "2026-04-29 18:30:00", "party_size": 4, "status": "CONFIRMED", "branch_name": "Chesapeake Bay"},
-                {"reservation_id": 505, "reservation_datetime": "2026-04-29 19:00:00", "party_size": 8, "status": "CONFIRMED", "branch_name": "Virginia Beach Boardwalk"},
-                {"reservation_id": 506, "reservation_datetime": "2026-04-29 19:00:00", "party_size": 3, "status": "PENDING",   "branch_name": "Norfolk Waterside"},
-                {"reservation_id": 507, "reservation_datetime": "2026-04-29 19:30:00", "party_size": 5, "status": "CONFIRMED", "branch_name": "Hampton Pier"},
-                {"reservation_id": 508, "reservation_datetime": "2026-04-29 20:00:00", "party_size": 2, "status": "CONFIRMED", "branch_name": "Chesapeake Bay"},
-                {"reservation_id": 509, "reservation_datetime": "2026-04-29 20:30:00", "party_size": 6, "status": "CONFIRMED", "branch_name": "Virginia Beach Boardwalk"},
-                {"reservation_id": 510, "reservation_datetime": "2026-04-29 21:00:00", "party_size": 4, "status": "PENDING",   "branch_name": "Norfolk Waterside"}
+                {"reservation_id": 501, "customer_name": "Day E", "reservation_datetime": "2026-04-29 17:30:00", "party_size": 4, "status": "SEATED",    "branch_name": "Soul by the Sea - Hampton"},
+                {"reservation_id": 502, "customer_name": "Maya Ross", "reservation_datetime": "2026-04-29 18:00:00", "party_size": 6, "status": "CONFIRMED", "branch_name": "Soul by the Sea - Norfolk"},
+                {"reservation_id": 503, "customer_name": "Jordan Lee", "reservation_datetime": "2026-04-29 18:15:00", "party_size": 2, "status": "SEATED",    "branch_name": "Soul by the Sea - Suffolk"},
+                {"reservation_id": 504, "customer_name": "Avery Stone", "reservation_datetime": "2026-04-29 18:30:00", "party_size": 4, "status": "CONFIRMED", "branch_name": "Soul by the Sea - Virginia Beach"}
             ]
         return rows
 
@@ -1804,6 +1994,7 @@ class HQDashboard(tk.Tk):
                   ).pack(side="right", padx=4, ipadx=8, ipady=4)
 
         rows = self.load_30day_performance()
+        self.draw_analytics_totals(rows)
 
         # work out the leader so we can scale the bars
         max_revenue = 0.0
@@ -1823,6 +2014,38 @@ class HQDashboard(tk.Tk):
                  ).pack(side="left")
 
 
+    def draw_analytics_totals(self, rows):
+        total_revenue = sum(float(r["revenue_30d"] or 0) for r in rows)
+        total_orders = sum(int(r["order_count"] or 0) for r in rows)
+        avg_order = total_revenue / total_orders if total_orders else 0
+        rated_rows = [r for r in rows if r.get("avg_rating") is not None]
+        avg_rating = (
+            sum(float(r["avg_rating"]) for r in rated_rows) / len(rated_rows)
+            if rated_rows else None
+        )
+        top_branch = rows[0]["branch_name"] if rows else "—"
+
+        summary = tk.Frame(self.content_frame, bg=BG_DARK)
+        summary.pack(fill="x", pady=(0, 14))
+
+        metrics = [
+            ("All-Branch Revenue", f"${total_revenue:,.2f}", GOLD),
+            ("Completed Orders", f"{total_orders:,}", TEXT),
+            ("Avg Order", f"${avg_order:,.2f}", TEXT),
+            ("Avg Rating", f"{avg_rating:.2f} / 5" if avg_rating is not None else "—", GREEN if avg_rating and avg_rating >= 4.2 else TEXT),
+            ("Top Branch", short_branch_name(top_branch), get_branch_color(top_branch)),
+        ]
+
+        for label, value, color in metrics:
+            card = tk.Frame(summary, bg=BG_PANEL, highlightthickness=1,
+                            highlightbackground=BORDER, padx=12, pady=10)
+            card.pack(side="left", fill="x", expand=True, padx=(0, 8))
+            tk.Label(card, text=label, bg=BG_PANEL, fg=MUTED,
+                     font=("Segoe UI", 8, "bold")).pack(anchor="w")
+            tk.Label(card, text=value, bg=BG_PANEL, fg=color,
+                     font=("Segoe UI", 15, "bold")).pack(anchor="w")
+
+
     def draw_analytics_card(self, r, max_revenue):
         card = tk.Frame(self.content_frame, bg=BG_PANEL,
                         highlightthickness=1, highlightbackground=BORDER)
@@ -1837,7 +2060,7 @@ class HQDashboard(tk.Tk):
         left.pack(side="left", padx=14, pady=4)
         tk.Label(left, text=r["branch_name"], bg=BG_PANEL, fg=TEXT,
                  font=("Segoe UI", 12, "bold")).pack(anchor="w")
-        manager = r["manager_name"]
+        manager = r["manager_name"] or fallback_manager_name(r["branch_name"])
         if manager is None or manager == "":
             manager = "(unassigned)"
         tk.Label(left, text="Manager: " + manager, bg=BG_PANEL, fg=MUTED,
@@ -1900,12 +2123,20 @@ class HQDashboard(tk.Tk):
                 if conn is not None:
                     cur = conn.cursor(dictionary=True)
                     sql = ("SELECT b.branch_id, b.branch_name, "
-                           "CONCAT(p.first_name, ' ', p.last_name) AS manager_name, "
+                           "COALESCE(CONCAT(p.first_name, ' ', p.last_name), "
+                           "  (SELECT CONCAT(mp.first_name, ' ', mp.last_name) "
+                           "   FROM employee me JOIN person mp ON me.person_id = mp.person_id "
+                           "   WHERE me.branch_id = b.branch_id "
+                           "     AND me.employment_status = 'ACTIVE' "
+                           "     AND me.job_title LIKE '%Manager%' "
+                           "   ORDER BY me.person_id LIMIT 1)) AS manager_name, "
                            "(SELECT COALESCE(SUM(o.total_amount), 0) FROM orders o "
                            "  WHERE o.branch_id = b.branch_id "
+                           "    AND o.order_status = 'COMPLETED' "
                            "    AND o.order_datetime >= NOW() - INTERVAL 30 DAY) AS revenue_30d, "
                            "(SELECT COUNT(*) FROM orders o "
                            "  WHERE o.branch_id = b.branch_id "
+                           "    AND o.order_status = 'COMPLETED' "
                            "    AND o.order_datetime >= NOW() - INTERVAL 30 DAY) AS order_count, "
                            "(SELECT AVG(r.rating) FROM review r "
                            "  WHERE r.branch_id = b.branch_id "
@@ -1926,13 +2157,11 @@ class HQDashboard(tk.Tk):
                 rows = []
 
         if len(rows) == 0:
-            rows = [
-                {"branch_id": 1, "branch_name": "Virginia Beach Boardwalk", "manager_name": "Pat Reyes",   "revenue_30d": 96420.50, "order_count": 1820, "avg_rating": 4.4},
-                {"branch_id": 2, "branch_name": "Norfolk Waterside",        "manager_name": "Tasha King",  "revenue_30d": 78310.25, "order_count": 1510, "avg_rating": 4.1},
-                {"branch_id": 3, "branch_name": "Hampton Pier",             "manager_name": "Marcus Hill", "revenue_30d": 64880.10, "order_count": 1290, "avg_rating": 3.9},
-                {"branch_id": 4, "branch_name": "Chesapeake Bay",           "manager_name": "Linda Park",  "revenue_30d": 58220.75, "order_count": 1145, "avg_rating": 3.4}
-            ]
-        return rows
+            rows = self.demo_analytics_rows(include_hampton=True)
+        else:
+            hampton_rows = [r for r in rows if "Hampton" in str(r.get("branch_name", ""))]
+            rows = hampton_rows[:1] + self.demo_analytics_rows(include_hampton=False)
+        return sorted(rows, key=lambda r: float(r["revenue_30d"] or 0), reverse=True)
 
 
     # ══════════════════════════════════════════════════════════════════════════
